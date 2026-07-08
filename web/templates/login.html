@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="zh" class="h-full">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>登录 - Quant Trader</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { background: #0b0e11; color: #eaecef; font-family: -apple-system, 'Segoe UI', sans-serif; }
+        .card { background: #1e2329; border: 1px solid #2b3139; border-radius: 8px; padding: 32px; width: 360px; }
+        input { background: #0b0e11; border: 1px solid #2b3139; border-radius: 4px; padding: 10px 14px; color: #eaecef; width: 100%; outline: none; font-size: 14px; }
+        input:focus { border-color: #f0b90b; }
+        .btn { background: #f0b90b; color: #0b0e11; border: none; padding: 10px; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: 600; width: 100%; }
+        .btn:hover { background: #dba40a; }
+    </style>
+</head>
+<body class="h-full flex items-center justify-center">
+    <div class="card">
+        <div class="text-center mb-6">
+            <div class="text-3xl mb-2">📊</div>
+            <div class="text-lg font-bold">Quant Trader</div>
+            <div class="text-sm" style="color:#848e9c;">请输入密码</div>
+        </div>
+        <form method="post">
+            <input type="password" name="password" placeholder="密码" class="mb-4" autofocus>
+            {% if error %}
+            <div class="text-sm mb-4" style="color:#f6465d;">{{ error }}</div>
+            {% endif %}
+            <button type="submit" class="btn">登录</button>
+        </form>
+    </div>
+</body>
+</html>

@@ -105,7 +105,7 @@ class PumpPullbackStrategy(Strategy):
                     state[i] = 0
                     bars_since_exit += 1
                     continue
-                cur = Side.LONG.value if side_mode == "long_only" else Side.LONG.value
+                cur = Side.LONG.value if side_mode == "long_only" else Side.SHORT.value
                 held = hold_bars
                 bars_since_exit = 0
                 entry_price = close[i]
