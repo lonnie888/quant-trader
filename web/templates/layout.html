@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="zh" class="h-full">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Quant Trader{% endblock %}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        dark: { bg: '#0b0e11', card: '#1e2329', border: '#2b3139', text: '#eaecef', muted: '#848e9c' },
+                        green: '#0ecb81', red: '#f6465d', yellow: '#f0b90b',
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body { background: #0b0e11; color: #eaecef; font-family: -apple-system, 'Segoe UI', sans-serif; }
+        .card { background: #1e2329; border: 1px solid #2b3139; border-radius: 8px; padding: 20px; }
+        .label { color: #848e9c; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+        .value { font-size: 28px; font-weight: 700; }
+        .green { color: #0ecb81; }
+        .red { color: #f6465d; }
+        .nav-link { color: #848e9c; padding: 8px 16px; border-radius: 6px; transition: all 0.15s; }
+        .nav-link:hover { color: #eaecef; background: #1e2329; }
+        .nav-link.active { color: #f0b90b; background: rgba(240,185,11,0.08); }
+        table { width: 100%; border-collapse: collapse; }
+        th { color: #848e9c; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; padding: 10px 12px; text-align: left; border-bottom: 1px solid #2b3139; }
+        td { padding: 10px 12px; border-bottom: 1px solid #2b3139; font-size: 13px; }
+        tr:hover td { background: rgba(255,255,255,0.02); }
+        .btn { background: #2b3139; color: #eaecef; border: none; padding: 6px 14px; border-radius: 4px; cursor: pointer; font-size: 13px; transition: background 0.15s; }
+        .btn:hover { background: #3c4553; }
+        .btn:disabled { opacity: 0.4; cursor: default; }
+        input, select { background: #0b0e11; border: 1px solid #2b3139; border-radius: 4px; padding: 6px 10px; color: #eaecef; font-size: 13px; outline: none; }
+        input:focus, select:focus { border-color: #f0b90b; }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #0b0e11; }
+        ::-webkit-scrollbar-thumb { background: #2b3139; border-radius: 3px; }
+    </style>
+</head>
+<body class="h-full">
+    <!-- 顶栏导航 -->
+    <nav class="border-b border-[#2b3139] px-6 py-3 flex items-center gap-1 sticky top-0 z-50" style="background:#0b0e11;">
+        <span class="text-lg font-bold mr-6" style="color:#f0b90b;">📊 Quant Trader</span>
+        <a href="/" class="nav-link {{ 'active' if request.path == '/' else '' }}">总览</a>
+        <a href="/positions" class="nav-link {{ 'active' if request.path == '/positions' else '' }}">持仓</a>
+        <a href="/history" class="nav-link {{ 'active' if request.path == '/history' else '' }}">历史</a>
+    </nav>
+
+    <main class="max-w-7xl mx-auto px-6 py-6">
+        {% block content %}{% endblock %}
+    </main>
+
+    {% block scripts %}{% endblock %}
+</body>
+</html>

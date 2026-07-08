@@ -1,0 +1,21 @@
+# Strategy parameter search spaces.
+# pump_pullback was tuned via tune_pump_pullback.py (walk-forward on 138 symbols
+# x 288 variants). Top picks by total leveraged return + 0.5 * win_rate * 5
+# minus worst trade penalty. Sample: 15 triggers, 40% win rate, +716% total.
+strategies:
+  pump_pullback:
+    active: true
+    params:
+      pump_window: [8]
+      pump_threshold: [0.13]
+      pullback_min: [0.00]
+      pullback_max: [0.30]
+      vol_shrink: [0.85]
+      vol_recover: [1.1]
+      trigger_pct: [0.003]
+      ema_period: [9]
+      hold_bars: [24]
+      cooldown: [12]
+      stop_loss_pct: [0.10]
+      take_profit_pct: [0.0]
+      side: ["long_only"]

@@ -1,0 +1,63 @@
+# Strategy parameter search spaces (LIGHT version for fast initial run).
+# Total variants ~80, full grid is in strategies_full.yaml.
+strategies:
+  ma_cross:
+    active: true
+    params:
+      fast: [8, 21]
+      slow: [34, 89]
+      side: ["long_only", "long_short"]
+
+  macd:
+    active: true
+    params:
+      fast: [12, 16]
+      slow: [26, 34]
+      signal: [9]
+      side: ["long_only", "long_short"]
+
+  rsi:
+    active: true
+    params:
+      period: [14, 21]
+      overbought: [70, 75]
+      oversold: [25, 30]
+      side: ["long_only"]
+
+  bollinger:
+    active: true
+    params:
+      period: [20, 30]
+      std: [2.0, 2.5]
+      side: ["long_only", "long_short"]
+
+  kdj:
+    active: true
+    params:
+      n: [9, 14]
+      k_period: [3]
+      d_period: [3]
+      side: ["long_only"]
+
+  turtle:
+    active: true
+    params:
+      entry: [20, 55]
+      exit: [10, 20]
+      side: ["long_only", "long_short"]
+
+  breakout:
+    active: true
+    params:
+      lookback: [20, 50]
+      atr_period: [14]
+      atr_mult: [1.5, 2.0]
+      side: ["long_only", "long_short"]
+
+  mean_reversion:
+    active: true
+    params:
+      zscore_period: [20, 30]
+      z_entry: [2.0]
+      z_exit: [0.5]
+      side: ["long_only"]

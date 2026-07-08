@@ -1,0 +1,53 @@
+﻿# Global settings for the quant trader project.
+
+binance:
+  api_key: "YOUR_API_KEY"          # read-only is enough for public market data
+  api_secret: "YOUR_API_SECRET"
+  testnet: false
+  recv_window_ms: 5000
+
+universe:
+  quote: "USDT"
+  top_n: 10
+  # 24h quote-volume filter to avoid illiquid symbols
+  min_quote_volume_24h: 20000000
+  exclude: ["BUSDUSDT", "BTCDOMUSDT", "USDCUSDT"]
+
+data:
+  storage_dir: "./data_store"
+  timeframes: ["15m"]
+  lookback_days: 7
+  funding_rate: false
+
+backtest:
+  initial_capital: 10000.0
+  leverage: 3
+  fee_rate: 0.0004          # taker
+  slippage_bps: 5
+  use_funding: false
+  liquidation_buffer: 0.05  # ignore orders closer than this to liq price
+
+scoring:
+  weight_return: 1.0
+  weight_sharpe: 0.5
+  weight_winrate: 0.3
+  weight_drawdown: 2.0      # penalty
+  weight_profit_factor: 0.5
+  constraints:
+    max_drawdown: 0.20
+    min_sharpe: 1.0
+    min_trades: 30
+
+risk:
+  max_position_pct: 0.10    # single position
+  max_total_exposure: 0.30
+  max_concurrent: 3          # hard cap on simultaneous open positions
+  daily_loss_limit: 0.05
+  stop_loss_pct: 0.10        # default SL (overridden by strategy params)
+  take_profit_pct: 0.0       # default TP (overridden by strategy params)
+
+notify:
+  enabled: false
+  telegram:
+    bot_token: ""
+    chat_id: ""

@@ -1,0 +1,63 @@
+﻿# Strategy parameter search spaces. Each strategy is enabled with `active: true`.
+# `params` are ranges (lists) used by the auto-generator for grid / sampling.
+strategies:
+  ma_cross:
+    active: true
+    params:
+      fast: [5, 8, 13, 21]
+      slow: [21, 34, 55, 89, 144]
+      side: ["long_only", "long_short"]
+
+  macd:
+    active: true
+    params:
+      fast: [8, 12, 16]
+      slow: [17, 26, 34]
+      signal: [6, 9, 12]
+      side: ["long_only", "long_short"]
+
+  rsi:
+    active: true
+    params:
+      period: [7, 14, 21]
+      overbought: [65, 70, 75, 80]
+      oversold: [20, 25, 30, 35]
+      side: ["long_only", "long_short"]
+
+  bollinger:
+    active: true
+    params:
+      period: [15, 20, 25, 30]
+      std: [1.5, 2.0, 2.5]
+      side: ["long_only", "long_short"]
+
+  kdj:
+    active: true
+    params:
+      n: [9, 14, 21]
+      k_period: [3, 5]
+      d_period: [3, 5]
+      side: ["long_only", "long_short"]
+
+  turtle:
+    active: true
+    params:
+      entry: [10, 20, 30, 55]
+      exit: [5, 10, 20]
+      side: ["long_only", "long_short"]
+
+  breakout:
+    active: true
+    params:
+      lookback: [20, 50, 100]
+      atr_period: [14, 20]
+      atr_mult: [1.0, 1.5, 2.0]
+      side: ["long_only", "long_short"]
+
+  mean_reversion:
+    active: true
+    params:
+      zscore_period: [20, 30, 50]
+      z_entry: [1.5, 2.0, 2.5]
+      z_exit: [0.3, 0.5]
+      side: ["long_only", "long_short"]

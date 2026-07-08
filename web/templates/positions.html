@@ -1,0 +1,30 @@
+{% extends "layout.html" %}
+{% block title %}持仓 - Quant Trader{% endblock %}
+
+{% block content %}
+<h1 class="text-2xl font-bold mb-6">当前持仓</h1>
+
+<div class="card p-0 overflow-x-auto">
+    <table>
+        <thead>
+            <tr>
+                <th>币种</th>
+                <th>入场价</th>
+                <th>最新价</th>
+                <th>PnL（杠杆）</th>
+                <th>止损价</th>
+                <th>剩余 K 线</th>
+                <th>持仓时长</th>
+                <th>入场时间</th>
+            </tr>
+        </thead>
+        <tbody id="positions-body">
+            <tr><td colspan="8" style="text-align:center; color:#848e9c; padding:30px;">加载中...</td></tr>
+        </tbody>
+    </table>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/positions.js"></script>
+{% endblock %}

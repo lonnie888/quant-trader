@@ -1,0 +1,62 @@
+{% extends "layout.html" %}
+{% block title %}历史 - Quant Trader{% endblock %}
+
+{% block content %}
+<h1 class="text-2xl font-bold mb-6">交易历史</h1>
+
+<!-- 筛选 -->
+<div class="card mb-6">
+    <div class="flex items-center gap-4">
+        <div>
+            <label class="label block mb-1">币种</label>
+            <input type="text" id="filter-symbol" placeholder="全部" style="width:120px;">
+        </div>
+        <div>
+            <label class="label block mb-1">退出原因</label>
+            <select id="filter-reason" style="width:140px;">
+                <option value="">全部</option>
+                <option value="stop_loss">止损</option>
+                <option value="take_profit">止盈</option>
+                <option value="time">时间到期</option>
+                <option value="manual">手动</option>
+            </select>
+        </div>
+        <button class="btn mt-5" onclick="loadHistory()">搜索</button>
+    </div>
+</div>
+
+<!-- 表格 -->
+<div class="card p-0 overflow-x-auto">
+    <table>
+        <thead>
+            <tr>
+                <th>币种</th>
+                <th>入场价</th>
+                <th>退出价</th>
+                <th>退出原因</th>
+                <th>PnL（杠杆）</th>
+                <th>持仓 K 线</th>
+                <th>最大浮盈</th>
+                <th>最大浮亏</th>
+                <th>入场时间</th>
+            </tr>
+        </thead>
+        <tbody id="history-body">
+            <tr><td colspan="9" style="text-align:center; color:#848e9c; padding:30px;">加载中...</td></tr>
+        </tbody>
+    </table>
+</div>
+
+<!-- 分页 -->
+<div class="flex items-center justify-between mt-4">
+    <span id="page-info" style="color:#848e9c; font-size:13px;"></span>
+    <div class="flex gap-2">
+        <button class="btn" id="prev-btn" onclick="prevPage()">上一页</button>
+        <button class="btn" id="next-btn" onclick="nextPage()">下一页</button>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/history.js"></script>
+{% endblock %}

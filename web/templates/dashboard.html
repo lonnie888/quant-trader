@@ -1,0 +1,50 @@
+{% extends "layout.html" %}
+{% block title %}总览 - Quant Trader{% endblock %}
+
+{% block content %}
+<h1 class="text-2xl font-bold mb-6">总览</h1>
+
+<!-- KPI 卡片 -->
+<div class="grid grid-cols-4 gap-4 mb-6">
+    <div class="card">
+        <div class="label">未实现 PnL</div>
+        <div class="value" id="unrealized-pnl">--</div>
+    </div>
+    <div class="card">
+        <div class="label">已实现 PnL（今日）</div>
+        <div class="value" id="realized-pnl">--</div>
+    </div>
+    <div class="card">
+        <div class="label">胜率</div>
+        <div class="value" id="win-rate">--</div>
+    </div>
+    <div class="card">
+        <div class="label">持仓数量</div>
+        <div class="value" id="open-positions">--</div>
+    </div>
+</div>
+
+<!-- 每日 PnL 图 -->
+<div class="card mb-6">
+    <div class="label mb-4">每日 PnL</div>
+    <div id="chart-wrapper">
+        <canvas id="dailyPnlChart"></canvas>
+    </div>
+</div>
+
+<!-- 当前持仓 -->
+<div class="card">
+    <div class="flex items-center justify-between mb-4">
+        <span class="label">当前持仓</span>
+        <a href="/positions" style="color:#f0b90b; font-size:13px;">查看全部 →</a>
+    </div>
+    <div id="positions-table">
+        <p style="color:#848e9c; font-size:14px; padding:20px 0; text-align:center;">加载中...</p>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="/static/dashboard.js"></script>
+{% endblock %}

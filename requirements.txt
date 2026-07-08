@@ -1,0 +1,16 @@
+﻿# Core
+pandas>=2.0.0
+numpy>=1.24.0
+pyarrow>=12.0.0
+pyyaml>=6.0
+
+# Exchange
+ccxt>=4.0.0
+requests>=2.31.0
+
+# Backtest / Optimize
+scipy>=1.11.0
+scikit-learn>=1.3.0
+
+# TA indicators
+ta>=0.11.0

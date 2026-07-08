@@ -1,0 +1,16 @@
+# quant_trader cron - drop into crontab with:
+#   crontab -l > crontab.bak
+#   cat deploy/quant_trader.cron >> crontab.bak
+#   crontab crontab.bak
+#
+# Times are UTC. Binance's 24h ticker for symbol X is finalized at 00:00 UTC;
+# running at 02:00 gives the API an hour to settle, then 01:00 UTC for the
+# positions_check so it sees the latest 15m bar and the 4h bar from the
+# previous session.
+
+# every day at 02:00 UTC: full pipeline (refresh + scan + risk gate + ledger)
+0 2 * * * cd /vol1/1000/quant_trader && /bin/bash deploy/run_daily.sh >> /vol1/1000/quant_trader/reports/logs/cron.log 2>&1
+
+# every 15 minutes: live PnL check on open positions (detects SL/TP hits
+# and time exits before the next daily run)
+*/15 * * * * cd /vol1/1000/quant_trader && /vol1/1000/quant_trader/.venv/bin/python -m quant_trader.scripts.positions_check >> /vol1/1000/quant_trader/reports/logs/cron.log 2>&1
