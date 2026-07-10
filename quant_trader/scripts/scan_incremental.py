@@ -109,7 +109,7 @@ def run():
     from quant_trader.data.storage.parquet_store import ParquetStore
     from quant_trader.strategy.generator.auto_strategy import generate_instances
     from quant_trader.execution.paper_ledger import (
-        get_all_positions, evaluate_risk, open_position, _has_open,
+        get_all_positions, get_open_positions, evaluate_risk, open_position, _has_open,
     )
 
     settings = load_settings()
@@ -259,7 +259,7 @@ def run():
                 gainer_str=gainer_str,
                 accepted=opened,
                 blocked=blocked,
-                open_pos=len(get_all_positions(positions_path)),
+                open_pos=len(get_open_positions(positions_path)),
             )
             feishu.send_card(card)
         except Exception:
