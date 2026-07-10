@@ -11,6 +11,8 @@
 # every day at 02:00 UTC: full pipeline (refresh + scan + risk gate + ledger)
 0 2 * * * cd /vol1/1000/quant_trader && /bin/bash deploy/run_daily.sh >> /vol1/1000/quant_trader/reports/logs/cron.log 2>&1
 
-# every 15 minutes: live PnL check on open positions (detects SL/TP hits
-# and time exits before the next daily run)
+# every 15 minutes: live PnL check + incremental gainer scan
 */15 * * * * cd /vol1/1000/quant_trader && /vol1/1000/quant_trader/.venv/bin/python -m quant_trader.scripts.positions_check >> /vol1/1000/quant_trader/reports/logs/cron.log 2>&1
+
+# every 15 minutes: incremental gainer scan (new symbols -> strategy -> open)
+*/15 * * * * cd /vol1/1000/quant_trader && /vol1/1000/quant_trader/.venv/bin/python -m quant_trader.scripts.scan_incremental >> /vol1/1000/quant_trader/reports/logs/cron.log 2>&1

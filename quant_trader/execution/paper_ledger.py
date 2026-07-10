@@ -89,8 +89,12 @@ def _next_id(events: list[dict]) -> int:
 
 
 def _has_open(events: list[dict], symbol: str) -> bool:
+    closed_ids: set[int] = set()
     for e in events:
-        if e["symbol"] == symbol and e["status"] == "open":
+        if e.get("status") in ("closed", "blocked"):
+            closed_ids.add(int(e["id"]))
+    for e in events:
+        if e["symbol"] == symbol and e["status"] == "open" and int(e["id"]) not in closed_ids:
             return True
     return False
 

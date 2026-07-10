@@ -41,6 +41,14 @@
         rightPriceScale: {
             borderColor: '#2b3139',
         },
+        localization: {
+            timeFormatter: (time) => {
+                // time is UTCTimestamp (epoch seconds), convert to Beijing time (UTC+8)
+                const d = new Date((time + 8 * 3600) * 1000);
+                const pad = (n) => String(n).padStart(2, '0');
+                return `${d.getUTCFullYear()}-${pad(d.getUTCMonth()+1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`;
+            },
+        },
     });
 
     const candlestickSeries = chart.addSeries(LightweightCharts.CandlestickSeries, {
