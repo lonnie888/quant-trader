@@ -5,26 +5,26 @@
 <h1 class="text-2xl font-bold mb-6">总览</h1>
 
 <!-- KPI 卡片 -->
-<div class="grid grid-cols-5 gap-4 mb-6">
+<div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3 sm:gap-4 mb-4 sm:mb-6">
     <div class="card">
-        <div class="label">未实现 PnL</div>
-        <div class="value" id="unrealized-pnl">--</div>
+        <div class="label text-xs sm:text-xs">未实现 PnL</div>
+        <div class="value text-xl sm:text-2xl md:text-3xl" id="unrealized-pnl">--</div>
     </div>
     <div class="card">
-        <div class="label">总实现 PnL</div>
-        <div class="value" id="total-realized-pnl">--</div>
+        <div class="label text-xs sm:text-xs">总实现 PnL</div>
+        <div class="value text-xl sm:text-2xl md:text-3xl" id="total-realized-pnl">--</div>
     </div>
     <div class="card">
-        <div class="label">已实现 PnL（今日）</div>
-        <div class="value" id="realized-pnl">--</div>
+        <div class="label text-xs sm:text-xs">今日 PnL</div>
+        <div class="value text-xl sm:text-2xl md:text-3xl" id="realized-pnl">--</div>
     </div>
     <div class="card">
-        <div class="label">胜率</div>
-        <div class="value" id="win-rate">--</div>
+        <div class="label text-xs sm:text-xs">胜率</div>
+        <div class="value text-xl sm:text-2xl md:text-3xl" id="win-rate">--</div>
     </div>
     <div class="card">
-        <div class="label">持仓数量</div>
-        <div class="value" id="open-positions">--</div>
+        <div class="label text-xs sm:text-xs">持仓</div>
+        <div class="value text-xl sm:text-2xl md:text-3xl" id="open-positions">--</div>
     </div>
 </div>
 
@@ -40,10 +40,12 @@
 <div class="card">
     <div class="flex items-center justify-between mb-4">
         <span class="label">当前持仓</span>
-        <a href="/positions" style="color:#f0b90b; font-size:13px;">查看全部 →</a>
+        <a href="/positions" class="text-sm" style="color:#f0b90b;">查看全部 →</a>
     </div>
-    <div id="positions-table">
-        <p style="color:#848e9c; font-size:14px; padding:20px 0; text-align:center;">加载中...</p>
+    <div class="table-wrap">
+        <div id="positions-table">
+            <p style="color:#848e9c; font-size:14px; padding:20px 0; text-align:center;">加载中...</p>
+        </div>
     </div>
 </div>
 {% endblock %}

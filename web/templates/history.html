@@ -2,18 +2,18 @@
 {% block title %}历史 - Quant Trader{% endblock %}
 
 {% block content %}
-<h1 class="text-2xl font-bold mb-6">交易历史</h1>
+<h1 class="text-xl sm:text-2xl font-bold mb-4 sm:mb-6">交易历史</h1>
 
 <!-- 筛选 -->
-<div class="card mb-6">
-    <div class="flex items-center gap-4">
-        <div>
+<div class="card mb-4 sm:mb-6">
+    <div class="flex items-center gap-4 mobile-stack">
+        <div class="w-full sm:w-auto">
             <label class="label block mb-1">币种</label>
-            <input type="text" id="filter-symbol" placeholder="全部" style="width:120px;">
+            <input type="text" id="filter-symbol" placeholder="全部" class="w-full sm:w-[120px]" style="box-sizing:border-box;">
         </div>
-        <div>
+        <div class="w-full sm:w-auto">
             <label class="label block mb-1">退出原因</label>
-            <select id="filter-reason" style="width:140px;">
+            <select id="filter-reason" class="w-full sm:w-[140px]">
                 <option value="">全部</option>
                 <option value="stop_loss">止损</option>
                 <option value="take_profit">止盈</option>
@@ -21,34 +21,36 @@
                 <option value="manual">手动</option>
             </select>
         </div>
-        <button class="btn mt-5" onclick="loadHistory()">搜索</button>
+        <button class="btn w-full sm:w-auto mt-0" onclick="loadHistory()">搜索</button>
     </div>
 </div>
 
 <!-- 表格 -->
-<div class="card p-0 overflow-x-auto">
-    <table>
-        <thead>
-            <tr>
-                <th>币种</th>
-                <th>入场价</th>
-                <th>退出价</th>
-                <th>退出原因</th>
-                <th>PnL（杠杆）</th>
-                <th>持仓 K 线</th>
-                <th>最大浮盈</th>
-                <th>最大浮亏</th>
-                <th>入场时间</th>
-            </tr>
-        </thead>
-        <tbody id="history-body">
-            <tr><td colspan="9" style="text-align:center; color:#848e9c; padding:30px;">加载中...</td></tr>
-        </tbody>
-    </table>
+<div class="card p-0">
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr>
+                    <th>币种</th>
+                    <th>入场</th>
+                    <th class="mobile-hide">退出</th>
+                    <th class="mobile-hide">原因</th>
+                    <th>PnL</th>
+                    <th class="mobile-hide">K线</th>
+                    <th class="mobile-hide">浮盈</th>
+                    <th class="mobile-hide">浮亏</th>
+                    <th class="mobile-hide">入场时间</th>
+                </tr>
+            </thead>
+            <tbody id="history-body">
+                <tr><td colspan="9" style="text-align:center; color:#848e9c; padding:30px;">加载中...</td></tr>
+            </tbody>
+        </table>
+    </div>
 </div>
 
 <!-- 分页 -->
-<div class="flex items-center justify-between mt-4">
+<div class="flex flex-col sm:flex-row items-center justify-between mt-4 gap-2">
     <span id="page-info" style="color:#848e9c; font-size:13px;"></span>
     <div class="flex gap-2">
         <button class="btn" id="prev-btn" onclick="prevPage()">上一页</button>
