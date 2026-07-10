@@ -22,9 +22,8 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 from quant_trader.config import load_settings  # noqa: E402
-from quant_trader.data.realtime.ws_client import FapiWS, stream_mark  # noqa: E402
+from quant_trader.data.realtime.ws_client import FapiWS, stream_kline  # noqa: E402
 from quant_trader.data.realtime.kline_strategy import KlineStrategyLoop  # noqa: E402
-from quant_trader.data.realtime.mark_stream import MarkPriceStream  # noqa: E402
 from quant_trader.data.realtime.sltp_watch import SLTPWatch  # noqa: E402
 from quant_trader.data.fetcher.gainers_scanner import scan_gainers  # noqa: E402
 from quant_trader.data.fetcher.binance_client import BinanceClient  # noqa: E402
@@ -60,31 +59,6 @@ async def _refresh_watchlist(ws, kline_loop: KlineStrategyLoop, sltp: SLTPWatch,
             log.warning("watchlist refresh failed: %s", e)
         # Refresh every 15 min
         await asyncio.sleep(900)
-
-
-async def _refresh_sltp_subs(mark: MarkPriceStream, sltp: SLTPWatch, ws: FapiWS):
-    """Re-subscribe SL/TP watch to currently open positions."""
-    while True:
-        try:
-            symbols = sltp.refresh_open()
-            new = []
-            for sym in symbols:
-                # 提取出 USDT 形式
-                api_sym = sym.split("/")[0].split(":")[0] + "USDT"
-                if not sltp.is_subscribed(api_sym):
-                    sltp.mark_subscribed(api_sym)
-                    new.append(api_sym)
-            if new:
-                streams = [stream_mark(s) for s in new]
-                await ws.subscribe(streams)
-                # Use a single shared handler that dispatches via mark._handle
-                # mark's keys are fapi form ('BTCUSDT'), so no sym capture needed
-                for stream in streams:
-                    ws.on(stream, mark._handle)
-                log.info("sltp subscribed: %d new symbols", len(new))
-        except Exception as e:
-            log.warning("sltp refresh error: %s", e)
-        await asyncio.sleep(30)
 
 
 async def _rest_poll_loop(settings, kline_loop, sltp, stop_event):
@@ -139,27 +113,14 @@ async def main():
     settings = load_settings()
     ws = FapiWS()
 
-    # mark price stream: shared between SL/TP watch and strategy
-    mark = MarkPriceStream(ws, [])
-
-    # SL/TP watcher
+    # SL/TP watcher (uses REST poll loop for mark price, WS not needed)
     sltp = SLTPWatch()
-
-    async def on_mark_tick(sym, mp):
-        # Dispatch to SL/TP watcher
-        sltp.on_mark(sym, mp)
 
     # Strategy loop on kline close
     kline_loop = KlineStrategyLoop(ws, settings=settings)
-    kline_loop.set_mark_provider(mark.get)
 
     # initial: subscribe to default watchlist 15m kline
     await kline_loop.subscribe(DEFAULT_WATCHLIST, interval="15m")
-
-    # SL/TP watch handler registration
-    async def on_mark_for_sltp(sym, mp):
-        sltp.on_mark(sym, mp)
-    mark._on_update = on_mark_for_sltp
 
     # Graceful shutdown
     stop_event = asyncio.Event()
@@ -173,23 +134,21 @@ async def main():
         except NotImplementedError:
             pass
 
-    # Try WebSocket first; if CloudFront blocks it, fall back to REST
-    log.info("connecting to WebSocket (fstream.binance.com)...")
-    ws_connected = await ws.run(stop_event=stop_event)
-    if ws_connected:
-        log.info("✅ WebSocket connected — running realtime mode")
-        tasks = [
-            asyncio.create_task(_refresh_watchlist(ws, kline_loop, sltp, settings), name="watchlist"),
-            asyncio.create_task(_refresh_sltp_subs(mark, sltp, ws), name="sltp_refresh"),
-        ]
-    else:
-        log.warning("⚠️ WebSocket unavailable (CloudFront block) — falling back to REST polling")
-        log.info("  REST polling: mark price every 15s, kline every 15min")
-        log.info("  (less real-time than WebSocket but fully functional)")
-        tasks = [
-            asyncio.create_task(_rest_poll_loop(settings, kline_loop, sltp, stop_event), name="rest_poll"),
-            asyncio.create_task(_refresh_watchlist(ws, kline_loop, sltp, settings), name="watchlist"),
-        ]
+    # Start REST polling and watchlist immediately (don't wait for WS)
+    tasks = [
+        asyncio.create_task(_rest_poll_loop(settings, kline_loop, sltp, stop_event), name="rest_poll"),
+        asyncio.create_task(_refresh_watchlist(ws, kline_loop, sltp, settings), name="watchlist"),
+    ]
+
+    # Try WebSocket in the background (may take ~15s through proxy)
+    log.info("connecting to WebSocket in background (fstream.binance.com)...")
+    async def _try_ws():
+        connected = await ws.run(stop_event=stop_event)
+        if connected:
+            log.info("✅ WebSocket online — kline strategy running on bar close")
+        else:
+            log.info("ℹ️ WebSocket unavailable — kline strategy disabled, REST polling active")
+    tasks.append(asyncio.create_task(_try_ws(), name="ws_try"))
 
     log.info("daemon started: watchlist=%d symbols", len(DEFAULT_WATCHLIST))
     try:

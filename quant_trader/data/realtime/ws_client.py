@@ -1,12 +1,13 @@
-"""Fapi WebSocket client for Binance USDT-perp.
+"""Fapi WebSocket client for Binance USDT-perp (aiohttp + proxy support).
 
 Provides async streaming of:
   - kline_1m / kline_15m streams
-  - markPrice@1s streams
+  - trade streams (for tick-level checks)
 
 Features:
+  - HTTP CONNECT proxy support (required in China)
   - Auto-reconnect with exponential backoff
-  - Multi-stream multiplexing on one connection
+  - Multi-stream multiplexing via SUBSCRIBE method
   - Callback dispatch by stream name
 """
 from __future__ import annotations
@@ -16,21 +17,23 @@ import json
 import logging
 from typing import Callable, Awaitable
 
-import websockets
+import aiohttp
 
 log = logging.getLogger(__name__)
 
 WS_BASE = "wss://fstream.binance.com/ws"
+PROXY = "http://192.168.1.1:7890"  # nikki mihomo proxy on router
 
 
 class FapiWS:
-    """Single multiplexed WebSocket connection to fapi."""
+    """Single WebSocket connection to fapi, with HTTP CONNECT proxy support."""
 
-    def __init__(self, base_url: str = WS_BASE):
-        self.base_url = base_url
+    def __init__(self, proxy: str | None = PROXY):
+        self.proxy = proxy
         self.handlers: dict[str, list[Callable[[dict], Awaitable[None]]]] = {}
         self.subs: set[str] = set()
-        self._ws = None
+        self._ws: aiohttp.ClientWebSocketResponse | None = None
+        self._session: aiohttp.ClientSession | None = None
         self._reader_task: asyncio.Task | None = None
         self._stop = False
 
@@ -47,69 +50,78 @@ class FapiWS:
             return
         self.subs.update(new)
         if self._ws is not None:
-            await self._send_subscribe(new)
-
-    async def _send_subscribe(self, streams: list[str]):
-        msg = {"method": "SUBSCRIBE", "params": streams, "id": int(asyncio.get_event_loop().time() * 1000) % 100000}
-        await self._ws.send(json.dumps(msg))
-        log.info("subscribed: %s", streams)
+            await self._ws.send_json({
+                "method": "SUBSCRIBE",
+                "params": new,
+                "id": int(asyncio.get_event_loop().time() * 1000) % 100000,
+            })
+            log.info("subscribed: %s", new)
 
     async def _reader(self):
         assert self._ws is not None
         try:
-            async for raw in self._ws:
+            async for msg in self._ws:
                 if self._stop:
                     break
-                try:
-                    msg = json.loads(raw)
-                except json.JSONDecodeError:
-                    continue
-                if "stream" in msg and "data" in msg:
-                    stream = msg["stream"]
-                    data = msg["data"]
+                if msg.type == aiohttp.WSMsgType.TEXT:
+                    try:
+                        data = json.loads(msg.data)
+                    except json.JSONDecodeError:
+                        continue
+                    # Single stream: {"stream":"...","data":{...}}
+                    # Or raw message: direct dict
+                    stream = data.get("stream", "")
+                    payload = data.get("data", data)
                     for h in self.handlers.get(stream, []):
                         try:
-                            await h(data)
+                            await h(payload)
                         except Exception as e:
                             log.exception("handler error on %s: %s", stream, e)
-        except websockets.ConnectionClosed:
-            log.warning("ws connection closed")
+                elif msg.type == aiohttp.WSMsgType.CLOSED:
+                    log.warning("ws closed")
+                    break
         except Exception as e:
             log.exception("ws reader error: %s", e)
 
     async def run(self, stop_event=None):
         """Main loop: connect, subscribe, read; reconnect on failure.
-        Returns True if WS connected, False if all attempts failed (caller
-        can fall back to REST polling)."""
-        backoff = 1.0
-        max_attempts = 3
-        attempt = 0
-        connected = False
-        while not self._stop and attempt < max_attempts and not connected:
-            if stop_event and stop_event.is_set():
-                break
-            attempt += 1
-            try:
-                log.info("connecting to %s (attempt %d/%d)", self.base_url, attempt, max_attempts)
-                async with websockets.connect(self.base_url, ping_interval=20, ping_timeout=10, open_timeout=5) as ws:
+        Returns True if connected, False if all attempts failed."""
+        self._session = aiohttp.ClientSession()
+        try:
+            max_attempts = 3
+            backoff = 1.0
+            connected = False
+            for attempt in range(1, max_attempts + 1):
+                if self._stop or (stop_event and stop_event.is_set()):
+                    break
+                try:
+                    log.info("connecting to %s (attempt %d/%d, proxy=%s)", WS_BASE, attempt, max_attempts, self.proxy)
+                    kwargs = {"timeout": aiohttp.ClientWSTimeout(ws_close=8.0)}
+                    if self.proxy:
+                        kwargs["proxy"] = self.proxy
+                    ws = await self._session.ws_connect(WS_BASE, **kwargs)
                     self._ws = ws
                     if self.subs:
-                        await self._send_subscribe(list(self.subs))
-                    backoff = 1.0
-                    attempt = 0
+                        await ws.send_json({
+                            "method": "SUBSCRIBE",
+                            "params": list(self.subs),
+                            "id": 1,
+                        })
                     connected = True
                     self._reader_task = asyncio.create_task(self._reader())
                     await self._reader_task
-            except (websockets.InvalidStatus, OSError, asyncio.TimeoutError) as e:
-                log.warning("ws connection failed (attempt %d/%d): %s", attempt, max_attempts, e)
-            except Exception as e:
-                log.warning("ws disconnected: %s, retry in %.1fs", e, backoff)
-            if self._stop or (stop_event and stop_event.is_set()):
-                break
-            if not connected and attempt < max_attempts:
-                await asyncio.sleep(backoff)
-                backoff = min(backoff * 2, 60.0)
-        return connected
+                    break
+                except (aiohttp.ClientConnectorError, asyncio.TimeoutError, OSError) as e:
+                    log.warning("ws connect failed (%d/%d): %s", attempt, max_attempts, e)
+                except Exception as e:
+                    log.warning("ws error: %s, retry in %.1fs", e, backoff)
+                if not connected and attempt < max_attempts:
+                    await asyncio.sleep(backoff)
+                    backoff = min(backoff * 2, 60.0)
+            return connected
+        finally:
+            if self._session and not self._session.closed:
+                await self._session.close()
 
     async def stop(self):
         self._stop = True
@@ -124,13 +136,13 @@ class FapiWS:
                 await self._reader_task
             except (asyncio.CancelledError, Exception):
                 pass
+        if self._session and not self._session.closed:
+            await self._session.close()
 
 
 def stream_kline(symbol: str, interval: str) -> str:
-    """Build kline stream name, e.g. 'btcusdt@kline_15m'."""
     return f"{symbol.lower()}@kline_{interval}"
 
 
-def stream_mark(symbol: str) -> str:
-    """Build mark price stream name."""
-    return f"{symbol.lower()}@markPrice@1s"
+def stream_trade(symbol: str) -> str:
+    return f"{symbol.lower()}@trade"
