@@ -62,20 +62,21 @@ async def _refresh_watchlist(ws, kline_loop: KlineStrategyLoop, sltp: SLTPWatch,
 
 
 async def _daily_recap_loop(stop_event):
-    """Trigger daily recap at 02:00 UTC each day."""
+    """Trigger daily recap at 00:00 UTC (= 08:00 北京时间) each day."""
     while not stop_event.is_set():
         from quant_trader.scripts.recap import generate, send_feishu
         from datetime import datetime, timezone, timedelta
         now = datetime.now(timezone.utc)
-        # Next 02:00 UTC
-        target = now.replace(hour=2, minute=0, second=0, microsecond=0)
+        # Next 00:00 UTC = 北京时间 08:00
+        target = now.replace(hour=0, minute=0, second=0, microsecond=0)
         if now >= target:
             target = target + timedelta(days=1)
         wait_sec = (target - now).total_seconds()
-        log.info("next daily recap at %s (in %.0f sec)", target.isoformat(), wait_sec)
+        log.info("next daily recap at %s UTC (in %.0f sec, = 北京时间 08:00)",
+                 target.isoformat(), wait_sec)
         try:
             await asyncio.wait_for(stop_event.wait(), timeout=wait_sec)
-            break  # stop_event set
+            break
         except asyncio.TimeoutError:
             pass
         if stop_event.is_set():
