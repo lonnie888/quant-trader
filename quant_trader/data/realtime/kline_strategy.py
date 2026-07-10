@@ -39,6 +39,8 @@ class KlineStrategyLoop:
         self.ws = ws
         self.cooldown_seconds = cooldown_seconds
         self._subscribed: set[str] = set()
+        # Cache strategy instances: yaml only read at __init__
+        self._instances = generate_instances(self.strategies_cfg)
 
     async def subscribe(self, symbols: list[str], interval: str = "15m"):
         from ..realtime.ws_client import stream_kline
@@ -134,7 +136,7 @@ class KlineStrategyLoop:
             "max_concurrent": int(risk_cfg.max_concurrent),
         }
 
-        for name, params, strat in instances:
+        for name, params, strat in self._instances:
             try:
                 sigs = strat.generate_signals(df)
             except Exception as e:

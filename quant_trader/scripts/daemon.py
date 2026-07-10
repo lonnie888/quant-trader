@@ -34,15 +34,10 @@ logging.basicConfig(
 )
 log = logging.getLogger("daemon")
 
-# Top 30 most active USDT-perps as the default watchlist.
-# In a more advanced version, refresh from gainers scanner every N minutes.
-DEFAULT_WATCHLIST = [
-    "BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "DOGEUSDT",
-    "ADAUSDT", "AVAXUSDT", "TRXUSDT", "DOTUSDT", "MATICUSDT", "LINKUSDT",
-    "LTCUSDT", "BCHUSDT", "NEARUSDT", "ATOMUSDT", "UNIUSDT", "APTUSDT",
-    "ARBUSDT", "OPUSDT", "INJUSDT", "TIAUSDT", "SUIUSDT", "SEIUSDT",
-    "ORDIUSDT", "WLDUSDT", "BLURUSDT", "PYTHUSDT", "JTOUSDT", "JUPUSDT",
-]
+# Initial empty watchlist. _refresh_watchlist task will populate from
+# gainers scanner on first iteration (top N by 24h quote volume).
+# Avoids subscribing to stale/hardcoded symbols that may not exist.
+DEFAULT_WATCHLIST: list[str] = []
 
 
 async def _refresh_watchlist(ws, kline_loop: KlineStrategyLoop, sltp: SLTPWatch,
@@ -81,8 +76,10 @@ async def _refresh_sltp_subs(mark: MarkPriceStream, sltp: SLTPWatch, ws: FapiWS)
             if new:
                 streams = [stream_mark(s) for s in new]
                 await ws.subscribe(streams)
-                for s in streams:
-                    ws.on(s, lambda data, sym=api_sym: mark._handle(data))  # type: ignore
+                # Use a single shared handler that dispatches via mark._handle
+                # mark's keys are fapi form ('BTCUSDT'), so no sym capture needed
+                for stream in streams:
+                    ws.on(stream, mark._handle)
                 log.info("sltp subscribed: %d new symbols", len(new))
         except Exception as e:
             log.warning("sltp refresh error: %s", e)

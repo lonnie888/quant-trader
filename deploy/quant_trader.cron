@@ -1,3 +1,11 @@
+# ⚠️ DEPRECATED in v0.3.0 — replaced by quant_trader.scripts.daemon
+# Do NOT install this cron if you are running the daemon. They will
+# double-execute open/close logic and corrupt the ledger.
+#
+# - daily_runner at 02:00 UTC may be kept (as a daily health check + full
+#   data refresh), but disable the */15 lines below.
+# - For full migration, use systemd/supervisor (see deploy/quant-trader-daemon.*).
+#
 # quant_trader cron - drop into crontab with:
 #   crontab -l > crontab.bak
 #   cat deploy/quant_trader.cron >> crontab.bak
@@ -9,10 +17,10 @@
 # previous session.
 
 # every day at 02:00 UTC: full pipeline (refresh + scan + risk gate + ledger)
-0 2 * * * cd /vol1/1000/quant_trader && /bin/bash deploy/run_daily.sh >> /vol1/1000/quant_trader/reports/logs/cron.log 2>&1
+# ONLY enable if daemon is NOT running
+# 0 2 * * * cd /vol1/1000/quant_trader && /bin/bash deploy/run_daily.sh >> /vol1/1000/quant_trader/reports/logs/cron.log 2>&1
 
 # every 15 minutes: live PnL check + incremental gainer scan
-*/15 * * * * cd /vol1/1000/quant_trader && /vol1/1000/quant_trader/.venv/bin/python -m quant_trader.scripts.positions_check >> /vol1/1000/quant_trader/reports/logs/cron.log 2>&1
-
-# every 15 minutes: incremental gainer scan (new symbols -> strategy -> open)
-*/15 * * * * cd /vol1/1000/quant_trader && /vol1/1000/quant_trader/.venv/bin/python -m quant_trader.scripts.scan_incremental >> /vol1/1000/quant_trader/reports/logs/cron.log 2>&1
+# DISABLED in v0.3.0 — handled by daemon
+# */15 * * * * cd /vol1/1000/quant_trader && /vol1/1000/quant_trader/.venv/bin/python -m quant_trader.scripts.positions_check >> /vol1/1000/quant_trader/reports/logs/cron.log 2>&1
+# */15 * * * * cd /vol1/1000/quant_trader && /vol1/1000/quant_trader/.venv/bin/python -m quant_trader.scripts.scan_incremental >> /vol1/1000/quant_trader/reports/logs/cron.log 2>&1

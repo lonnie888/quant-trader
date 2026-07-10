@@ -35,8 +35,10 @@ class FapiWS:
         self._stop = False
 
     def on(self, stream: str, handler: Callable[[dict], Awaitable[None]]):
-        """Register async callback for a stream pattern (exact match)."""
-        self.handlers.setdefault(stream, []).append(handler)
+        """Register async callback for a stream pattern (exact match, dedup)."""
+        handlers = self.handlers.setdefault(stream, [])
+        if handler not in handlers:
+            handlers.append(handler)
 
     async def subscribe(self, streams: list[str]):
         """Subscribe to additional streams (idempotent)."""

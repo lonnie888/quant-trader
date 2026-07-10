@@ -41,4 +41,16 @@ class MarkPriceStream:
                 log.exception("mark on_update error: %s", e)
 
     def get(self, symbol: str) -> float | None:
-        return self.latest.get(symbol.upper())
+        """Look up mark by ccxt symbol ('BTC/USDT:USDT') or fapi ('BTCUSDT')."""
+        s = symbol.upper()
+        if s in self.latest:
+            return self.latest[s]
+        # Try converting ccxt → fapi
+        if "/" in s:
+            s2 = s.split("/")[0].split(":")[0] + "USDT"
+            return self.latest.get(s2)
+        return None
+
+    def set(self, symbol: str, price: float):
+        """Direct setter (used by tests / fallback)."""
+        self.latest[symbol.upper()] = float(price)

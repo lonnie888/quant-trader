@@ -58,7 +58,25 @@ Reports go to `reports/paper/`:
   - `positions-YYYY-MM-DD.md` live PnL of every open position
   - `recap-YYYY-MM-DD.md`    closed-trade PnL breakdown
 
-## Manual run
+## ⚠️ v0.3.0 重要变更：实时 Daemon 替代 cron
+
+**从 v0.3.0 开始，`deploy/quant_trader.cron` 已弃用**，三套轮询脚本被常驻 daemon 替代：
+
+| 旧 cron 任务 | 新 daemon 任务 |
+|:----|:----|
+| `*/15 positions_check` | markPrice 流每秒推送 |
+| `*/15 scan_incremental` | kline 流 `k.x=true` 即时跑策略 |
+| `0 2 daily_runner` | 可选保留（健康检查 + 全量回填） |
+
+**如果使用 daemon，请勿同时安装 cron 的 `*/15` 行**，否则会双重入场损坏 ledger。
+
+部署 daemon 详见 [`../docs/daemon.md`](../docs/daemon.md)：
+```bash
+sudo cp deploy/quant-trader-daemon.service /etc/systemd/system/
+sudo systemctl enable --now quant-trader-daemon
+```
+
+## 旧版 cron 安装（仅在不用 daemon 时使用）
 
 If you want to trigger a run by hand (e.g. after editing `config/strategies.yaml`):
 
