@@ -1,10 +1,13 @@
-"""Daily recap: replay every open signal from prior days' paper-trade logs
-and compute realized PnL using the actual subsequent 15m klines.
+"""Generate daily recap markdown from positions ledger.
 
-For each (symbol, strategy, params, entry_price, entry_time) entry:
-  - fetch klines from entry_time to now via the public fapi endpoint
-  - simulate the strategy's hold_bars with bar-internal SL/TP priority
-  - pnl_pct = (exit - entry) / entry * leverage
+Reads positions.jsonl and produces:
+  - reports/paper/recap-YYYY-MM-DD.md   human-readable daily summary
+  - Feishu interactive card via notifier (optional, --no-feishu to skip)
+
+Usage:
+  python -m quant_trader.scripts.recap --date 2026-07-10
+  python -m quant_trader.scripts.recap                       # today (UTC)
+  python -m quant_trader.scripts.recap --no-feishu           # skip notification
 """
 from __future__ import annotations
 
@@ -12,266 +15,220 @@ import argparse
 import json
 import logging
 import sys
-from datetime import datetime, timezone, timedelta
+from collections import defaultdict
+from datetime import datetime, timezone
 from pathlib import Path
-
-import requests
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-from quant_trader.config import load_settings  # noqa: E402
-
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("recap")
 
+LEDGER = ROOT / "reports" / "paper" / "positions.jsonl"
 
-def load_paper_log(path: Path) -> list[dict]:
+
+def _read_events(path: Path) -> list[dict]:
     if not path.exists():
         return []
-    out = []
-    with open(path, "r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                out.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue
-    return out
+    return [json.loads(l) for l in path.read_text().strip().split("\n") if l.strip()]
 
 
-def fetch_subsequent_klines(symbol: str, start_ms: int) -> list[list]:
-    """Fetch 15m klines via the fapi public endpoint (no auth needed)."""
-    out: list[list] = []
-    cursor = start_ms
-    api_symbol = symbol.split("/")[0].split(":")[0] + "USDT"
-    base = "https://fapi.binance.com/fapi/v1/klines"
-    while True:
-        r = requests.get(
-            base,
-            params={"symbol": api_symbol, "interval": "15m", "startTime": cursor, "limit": 1000},
-            timeout=15,
+def _resolve_open(events: list[dict]) -> dict[int, dict]:
+    """Resolve final status per id: open+later-closed → closed. open+later-blocked → blocked."""
+    by_id: dict[int, dict] = {}
+    for e in events:
+        eid = int(e["id"])
+        if e.get("status") == "open":
+            by_id[eid] = e
+        elif eid in by_id:
+            by_id[eid] = e  # later close/blocked wins
+        else:
+            by_id[eid] = e
+    return by_id
+
+
+def generate(date: str, ledger_path: Path = LEDGER) -> tuple[Path, dict]:
+    """Generate recap for `date` (YYYY-MM-DD, UTC). Returns (path, stats)."""
+    events = _read_events(ledger_path)
+    resolved = _resolve_open(events)
+
+    closed_today = []
+    blocked_today = []
+    for eid, ev in resolved.items():
+        if ev.get("status") == "closed" and ev.get("exit_ts", "").startswith(date):
+            closed_today.append(ev)
+        elif ev.get("status") == "blocked" and ev.get("open_day") == date:
+            blocked_today.append(ev)
+
+    pnls = [e.get("pnl_pct_lev", 0.0) or 0.0 for e in closed_today]
+    realized = sum(pnls)
+    wins = [p for p in pnls if p > 0]
+    losses = [p for p in pnls if p < 0]
+    win_rate = len(wins) / len(pnls) * 100 if pnls else 0
+    avg_win = sum(wins) / len(wins) if wins else 0
+    avg_loss = sum(losses) / len(losses) if losses else 0
+    profit_factor = abs(sum(wins) / sum(losses)) if losses else float("inf")
+
+    open_today = []
+    for eid, ev in resolved.items():
+        if ev.get("status") == "open" and ev.get("open_day") == date:
+            open_today.append(ev)
+
+    # Per-symbol aggregation for closed trades
+    per_sym: dict[str, list[float]] = defaultdict(list)
+    for e in closed_today:
+        per_sym[e["symbol"]].append(e.get("pnl_pct_lev", 0.0) or 0.0)
+
+    out = ROOT / "reports" / "paper" / f"recap-{date}.md"
+    lines = [
+        f"# Daily Recap - {date}",
+        "",
+        f"_Generated as-of {date} (UTC)_",
+        "",
+        f"**Aggregate**: realized={realized*100:+.2f}%  trades={len(closed_today)}  blocked={len(blocked_today)}  opens={len(open_today)}",
+        "",
+        f"**Win rate**: {win_rate:.1f}%  ({len(wins)}W / {len(losses)}L)",
+        f"**Avg win**: {avg_win*100:+.2f}%  |  **Avg loss**: {avg_loss*100:+.2f}%  |  **Profit Factor**: {profit_factor:.2f}",
+        "",
+        f"## Closed trades ({len(closed_today)})",
+        "",
+        "| id | symbol | strategy | entry_price | exit_price | reason | pnl% (lev) |",
+        "| ---: | --- | --- | ---: | ---: | :---: | ---: |",
+    ]
+    for e in sorted(closed_today, key=lambda x: x.get("exit_ts", "")):
+        pnl = e.get("pnl_pct_lev", 0.0) or 0.0
+        sym_s = e["symbol"].replace("/USDT:USDT", "")
+        lines.append(
+            f"| {e['id']} | {sym_s} | {e['strategy']} | "
+            f"{e['entry_price']:.6f} | {e['exit_price']:.6f} | "
+            f"{e['exit_reason']} | {pnl*100:+.2f}% |"
         )
-        r.raise_for_status()
-        batch = r.json()
-        if not batch:
-            break
-        out.extend([[float(x) for x in row[:6]] for row in batch])
-        if len(batch) < 1000:
-            break
-        cursor = batch[-1][0] + 15 * 60 * 1000
-    return out
 
+    if blocked_today:
+        lines += ["", f"## Blocked by risk ({len(blocked_today)})", ""]
+        reasons: dict[str, int] = defaultdict(int)
+        for e in blocked_today:
+            reasons[e.get("block_reason", "?")] += 1
+        for r, c in sorted(reasons.items(), key=lambda x: -x[1]):
+            lines.append(f"- `{r}` × {c}")
 
-def simulate_hold(klines: list[list], entry_ts_ms: int, entry_price: float,
-                  hold_bars: int, leverage: float,
-                  stop_loss_pct: float = 0.0,
-                  take_profit_pct: float = 0.0) -> dict:
-    """Walk klines bar-by-bar; first-of SL/TP/time exit wins.
+    if open_today:
+        lines += ["", f"## Open positions from today ({len(open_today)})", ""]
+        for e in open_today:
+            sym_s = e["symbol"].replace("/USDT:USDT", "")
+            lines.append(f"- id={e['id']} {sym_s} @ `{e['entry_price']:.6f}`")
 
-    Returns a dict with ok flag, exit price + reason, pnl% (raw and lev),
-    and max favorable / adverse excursion during the hold window.
-    """
-    if not klines:
-        return {"ok": False, "reason": "no klines"}
+    lines += [
+        "",
+        "---",
+        "",
+        f"_pump_pullback v1.2 | backtest walk-forward 70/30 | generated by quant_trader.scripts.recap_",
+    ]
+    out.write_text("\n".join(lines), encoding="utf-8")
+    log.info("wrote %s", out)
 
-    sl_price = entry_price * (1 - stop_loss_pct) if stop_loss_pct > 0 else None
-    tp_price = entry_price * (1 + take_profit_pct) if take_profit_pct > 0 else None
-    exit_ts_target = entry_ts_ms + hold_bars * 15 * 60 * 1000
-
-    exit_price = None
-    exit_ts = None
-    exit_reason = "time"
-    max_fav = 0.0
-    max_adv = 0.0
-    bars_held = 0
-
-    for row in klines:
-        ts, o, h, l, c, v = row
-        if ts < entry_ts_ms:
-            continue
-        if entry_price > 0:
-            fav = (h - entry_price) / entry_price
-            adv = (l - entry_price) / entry_price
-            if fav > max_fav:
-                max_fav = fav
-            if adv < max_adv:
-                max_adv = adv
-
-        if sl_price is not None and l <= sl_price:
-            exit_price = sl_price
-            exit_ts = ts
-            exit_reason = "stop_loss"
-            break
-        if tp_price is not None and h >= tp_price:
-            exit_price = tp_price
-            exit_ts = ts
-            exit_reason = "take_profit"
-            break
-        if ts >= exit_ts_target:
-            exit_price = c
-            exit_ts = ts
-            exit_reason = "time"
-            break
-        bars_held += 1
-
-    if exit_price is None:
-        exit_price = klines[-1][4]
-        exit_ts = klines[-1][0]
-        exit_reason = "data_end"
-
-    pnl_pct = (exit_price - entry_price) / entry_price if entry_price > 0 else 0.0
-    pnl_lev = pnl_pct * leverage
-    return {
-        "ok": True,
-        "entry_ts": entry_ts_ms,
-        "entry_price": entry_price,
-        "exit_ts": exit_ts,
-        "exit_price": exit_price,
-        "exit_reason": exit_reason,
-        "bars_in_trade": bars_held,
-        "pnl_pct_raw": pnl_pct,
-        "pnl_pct_lev": pnl_lev,
-        "max_favorable_pct": max_fav,
-        "max_adverse_pct": max_adv,
-        "win": pnl_lev > 0,
+    stats = {
+        "date": date,
+        "realized_pct": round(realized * 100, 2),
+        "trades": len(closed_today),
+        "blocked": len(blocked_today),
+        "open_today": len(open_today),
+        "win_rate": round(win_rate, 1),
+        "avg_win_pct": round(avg_win * 100, 2),
+        "avg_loss_pct": round(avg_loss * 100, 2),
+        "profit_factor": round(profit_factor, 2),
+        "per_symbol": {s.replace("/USDT:USDT", ""): round(sum(p), 2) for s, p in per_sym.items()},
     }
+    return out, stats
+
+
+def send_feishu(stats: dict) -> bool:
+    """Send daily recap to Feishu webhook."""
+    try:
+        from quant_trader.execution.notifier import FeishuNotifier
+    except ImportError:
+        log.warning("notifier module not available")
+        return False
+
+    # Build card
+    realized = stats["realized_pct"]
+    if realized > 5:
+        template = "green"
+    elif realized > 0:
+        template = "blue"
+    else:
+        template = "red"
+
+    elements = [
+        {
+            "tag": "div",
+            "fields": [
+                {"is_short": True, "text": {"tag": "lark_md",
+                 "content": f"**📈 今日已实现**\n{realized:+.2f}%"}},
+                {"is_short": True, "text": {"tag": "lark_md",
+                 "content": f"**🎯 胜率**\n{stats['win_rate']:.1f}%"}},
+                {"is_short": True, "text": {"tag": "lark_md",
+                 "content": f"**📊 交易数**\n{stats['trades']}"}},
+                {"is_short": True, "text": {"tag": "lark_md",
+                 "content": f"**⛔ 风控阻挡**\n{stats['blocked']}"}},
+            ],
+        },
+        {"tag": "hr"},
+        {
+            "tag": "div",
+            "text": {"tag": "lark_md", "content": (
+                f"**Profit Factor**: {stats['profit_factor']:.2f}  |  "
+                f"**Avg Win**: {stats['avg_win_pct']:+.2f}%  |  "
+                f"**Avg Loss**: {stats['avg_loss_pct']:+.2f}%"
+            )},
+        },
+    ]
+    if stats.get("per_symbol"):
+        elements.append({"tag": "hr"})
+        per_sym_lines = []
+        for sym, total in sorted(stats["per_symbol"].items(), key=lambda x: -x[1])[:10]:
+            per_sym_lines.append(f"`{sym}`: {total:+.2f}%")
+        elements.append({
+            "tag": "div",
+            "text": {"tag": "lark_md", "content": "**币种 Top10**\n" + "\n".join(per_sym_lines)},
+        })
+
+    elements.append({
+        "tag": "note",
+        "elements": [{"tag": "plain_text",
+                      "content": f"⏱ {stats['date']} 02:00 UTC · pump_pullback v1.2 每日回顾"}],
+    })
+
+    card = {
+        "msg_type": "interactive",
+        "card": {
+            "header": {
+                "title": {"tag": "plain_text", "content": f"📊 每日复盘 | {stats['date']}"},
+                "template": template,
+            },
+            "elements": elements,
+        },
+    }
+
+    feishu = FeishuNotifier()
+    return feishu.send_card(card)
 
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--config", default="config/settings.yaml")
-    p.add_argument("--log-dir", default="reports/paper")
-    p.add_argument("--date", help="YYYY-MM-DD; default = yesterday")
-    p.add_argument("--days-back", type=int, default=3, help="replay last N days of paper logs")
-    p.add_argument("--default-stop-loss-pct", type=float, default=0.10,
-                   help="used when a paper entry has no `stop_loss_pct` in params")
-    p.add_argument("--default-take-profit-pct", type=float, default=0.0,
-                   help="used when a paper entry has no `take_profit_pct` in params")
+    p.add_argument("--date", help="UTC date YYYY-MM-DD (default: today)")
+    p.add_argument("--no-feishu", action="store_true", help="skip Feishu notification")
     args = p.parse_args()
 
-    settings = load_settings(args.config)
-    bt_cfg = settings.backtest
-    leverage = float(bt_cfg.leverage)
+    date = args.date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    out, stats = generate(date)
 
-    log_dir = Path(args.log_dir)
-    if not log_dir.exists():
-        log.error("log dir %s does not exist", log_dir)
-        return
+    if not args.no_feishu:
+        ok = send_feishu(stats)
+        log.info("feishu: %s", "sent" if ok else "skipped/failed")
 
-    now = datetime.now(timezone.utc)
-    today = now.strftime("%Y-%m-%d")
-    if args.date:
-        # include this specific day in addition to days_back window
-        days = [args.date] + [(now - timedelta(days=d)).strftime("%Y-%m-%d")
-                              for d in range(1, args.days_back + 1)]
-    else:
-        days = [(now - timedelta(days=d)).strftime("%Y-%m-%d")
-                for d in range(1, args.days_back + 1)]
-    log_files = [(d, log_dir / f"{d}.jsonl") for d in days
-                 if (log_dir / f"{d}.jsonl").exists()]
-
-    if not log_files:
-        log.error("no log files in last %d days", args.days_back)
-        return
-    log.info("replaying %d log file(s): %s", len(log_files), [d for d, _ in log_files])
-
-    all_entries: list[tuple[str, dict]] = []
-    for day, p in log_files:
-        entries = load_paper_log(p)
-        for e in entries:
-            all_entries.append((day, e))
-    log.info("total entries: %d", len(all_entries))
-
-    recaps: list[dict] = []
-    for day, e in all_entries:
-        sym = e["symbol"]
-        entry_price = e["price"]
-        entry_ts = datetime.fromisoformat(e["timestamp"].replace("Z", "+00:00"))
-        entry_ms = int(entry_ts.timestamp() * 1000)
-        hold_bars = int(e["params"].get("hold_bars", 24))
-        sl = float(e["params"].get("stop_loss_pct", args.default_stop_loss_pct))
-        tp = float(e["params"].get("take_profit_pct", args.default_take_profit_pct))
-        try:
-            klines = fetch_subsequent_klines(sym, entry_ms)
-        except Exception as exc:
-            log.warning("fetch failed %s: %s", sym, exc)
-            continue
-        sim = simulate_hold(klines, entry_ms, entry_price, hold_bars, leverage,
-                            stop_loss_pct=sl, take_profit_pct=tp)
-        if not sim.get("ok"):
-            continue
-        recaps.append({
-            "open_day": day,
-            "symbol": sym,
-            "strategy": e["strategy"],
-            "params": e["params"],
-            **sim,
-        })
-
-    if not recaps:
-        log.warning("nothing to recap")
-        return
-
-    n = len(recaps)
-    wins = sum(1 for r in recaps if r["win"])
-    losses = n - wins
-    avg_pnl = sum(r["pnl_pct_lev"] for r in recaps) / n
-    avg_pnl_wins = (sum(r["pnl_pct_lev"] for r in recaps if r["win"]) / wins) if wins else 0.0
-    avg_pnl_losses = (sum(r["pnl_pct_lev"] for r in recaps if not r["win"]) / losses) if losses else 0.0
-    total_lev = sum(r["pnl_pct_lev"] for r in recaps)
-    win_rate = wins / n
-
-    by_strat: dict[str, list[dict]] = {}
-    by_reason: dict[str, int] = {}
-    for r in recaps:
-        by_strat.setdefault(r["strategy"], []).append(r)
-        by_reason[r["exit_reason"]] = by_reason.get(r["exit_reason"], 0) + 1
-
-    out_path = log_dir / f"recap-{today}.md"
-    lines = [
-        f"# Recap - {today}",
-        "",
-        f"_Replayed {n} entries from {len(log_files)} day(s), SL={args.default_stop_loss_pct*100:.0f}% TP={args.default_take_profit_pct*100:.0f}%",
-        "",
-        f"**Overall**: win_rate={win_rate*100:.1f}% ({wins}W / {losses}L)  avg_pnl={avg_pnl*100:+.2f}%  total_lev={total_lev*100:+.2f}%",
-        "",
-        f"**Wins** avg_pnl={avg_pnl_wins*100:+.2f}%  |  **Losses** avg_pnl={avg_pnl_losses*100:+.2f}%",
-        "",
-        f"**Exit reasons**: " + ", ".join(f"{k}={v}" for k, v in sorted(by_reason.items())),
-        "",
-        "## Per trade",
-        "",
-        "| open_day | symbol | strategy | entry | exit | reason | pnl% (lev) | max_fav% | max_adv% | win |",
-        "| --- | --- | --- | ---: | ---: | :---: | ---: | ---: | ---: | :---: |",
-    ]
-    for r in sorted(recaps, key=lambda x: -x["pnl_pct_lev"]):
-        lines.append("| %s | %s | %s | %.6f | %.6f | %s | %+.2f | %+.2f | %+.2f | %s |" % (
-            r["open_day"], r["symbol"], r["strategy"],
-            r["entry_price"], r["exit_price"], r["exit_reason"],
-            r["pnl_pct_lev"] * 100,
-            r["max_favorable_pct"] * 100,
-            r["max_adverse_pct"] * 100,
-            "W" if r["win"] else "L",
-        ))
-    lines += [
-        "",
-        "## By strategy",
-        "",
-        "| strategy | n | win_rate | avg_pnl% | total% |",
-        "| --- | ---: | ---: | ---: | ---: |",
-    ]
-    for strat, lst in sorted(by_strat.items(), key=lambda kv: -sum(r["pnl_pct_lev"] for r in kv[1])):
-        ns = len(lst)
-        ws = sum(1 for r in lst if r["win"])
-        ap = sum(r["pnl_pct_lev"] for r in lst) / ns
-        tp = sum(r["pnl_pct_lev"] for r in lst)
-        lines.append("| %s | %d | %.1f%% | %+.2f | %+.2f |" % (strat, ns, ws/ns*100, ap*100, tp*100))
-
-    out_path.write_text("\n".join(lines), encoding="utf-8")
-    log.info("wrote %s", out_path)
+    print(out.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

@@ -61,6 +61,35 @@ async def _refresh_watchlist(ws, kline_loop: KlineStrategyLoop, sltp: SLTPWatch,
         await asyncio.sleep(900)
 
 
+async def _daily_recap_loop(stop_event):
+    """Trigger daily recap at 02:00 UTC each day."""
+    while not stop_event.is_set():
+        from quant_trader.scripts.recap import generate, send_feishu
+        from datetime import datetime, timezone, timedelta
+        now = datetime.now(timezone.utc)
+        # Next 02:00 UTC
+        target = now.replace(hour=2, minute=0, second=0, microsecond=0)
+        if now >= target:
+            target = target + timedelta(days=1)
+        wait_sec = (target - now).total_seconds()
+        log.info("next daily recap at %s (in %.0f sec)", target.isoformat(), wait_sec)
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=wait_sec)
+            break  # stop_event set
+        except asyncio.TimeoutError:
+            pass
+        if stop_event.is_set():
+            break
+        try:
+            date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            out, stats = generate(date)
+            ok = send_feishu(stats)
+            log.info("daily recap %s: realized=%+.2f%% trades=%d feishu=%s",
+                     date, stats["realized_pct"], stats["trades"], "ok" if ok else "skip")
+        except Exception as e:
+            log.warning("daily recap failed: %s", e)
+
+
 async def _rest_poll_loop(settings, kline_loop, sltp, stop_event):
     """Fallback REST polling when WebSocket is unavailable.
     Polls mark price every 15s."""
@@ -116,6 +145,34 @@ async def main():
     # SL/TP watcher (uses REST poll loop for mark price, WS not needed)
     sltp = SLTPWatch()
 
+    # Feishu notifier for SL/TP close events
+    from quant_trader.execution.notifier import FeishuNotifier, FeishuCardBuilder
+    feishu = FeishuNotifier()
+
+    def _on_sltp_close(closed: dict):
+        """Called by sltp.on_mark when a position is auto-closed."""
+        try:
+            ev = closed
+            entry = float(ev.get("entry_price", 0))
+            exit_ = float(ev.get("exit_price", 0))
+            pnl = float(ev.get("pnl_pct_lev", 0) or 0)
+            reason = ev.get("exit_reason", "")
+            sym = ev.get("symbol", "")
+            max_fav = float(ev.get("max_favorable_pct", 0) or 0)
+            max_adv = float(ev.get("max_adverse_pct", 0) or 0)
+            card = FeishuCardBuilder.make_position_close(
+                symbol=sym, exit_reason=reason,
+                entry_price=entry, exit_price=exit_,
+                pnl_pct_lev=pnl,
+                max_fav_pct=max_fav, max_adv_pct=max_adv,
+            )
+            feishu.send_card(card)
+            log.info("feishu SL/TP notify: %s reason=%s pnl=%+.2f%%", sym, reason, pnl*100)
+        except Exception as e:
+            log.warning("feishu SL/TP notify failed: %s", e)
+
+    sltp.on_close = _on_sltp_close
+
     # Strategy loop on kline close
     kline_loop = KlineStrategyLoop(ws, settings=settings)
 
@@ -138,6 +195,7 @@ async def main():
     tasks = [
         asyncio.create_task(_rest_poll_loop(settings, kline_loop, sltp, stop_event), name="rest_poll"),
         asyncio.create_task(_refresh_watchlist(ws, kline_loop, sltp, settings), name="watchlist"),
+        asyncio.create_task(_daily_recap_loop(stop_event), name="daily_recap"),
     ]
 
     # Try WebSocket in the background (may take ~15s through proxy)
