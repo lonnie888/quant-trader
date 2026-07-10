@@ -137,7 +137,6 @@ def run():
     log.info("策略变体数: %d", len(instances))
 
     positions_path = Path("reports/paper/positions.jsonl")
-    all_events = get_all_positions(positions_path)
     risk_cfg = settings.risk
     risk_check = {
         "initial_capital": float(settings.backtest.initial_capital),
@@ -148,11 +147,12 @@ def run():
     }
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     opened = 0
+    blocked = 0
 
     # 收集最近 timeout 退出的币（冷却期），不让它们立刻重新开仓
     cooldown_symbols: set[str] = set()
     now = datetime.now(timezone.utc)
-    for e in all_events:
+    for e in get_all_positions(positions_path):
         if e.get("status") == "closed" and e.get("exit_reason") == "time":
             exit_ts = e.get("exit_ts")
             if exit_ts:
@@ -179,7 +179,7 @@ def run():
         if sym in cooldown_symbols:
             log.info("跳过: %s 在冷却期内（刚timeout退出）", sym)
             continue
-        if _has_open(all_events, sym):
+        if _has_open(get_all_positions(positions_path), sym):
             log.info("跳过: %s 已有持仓", sym)
             continue
         df = store.load(sym, "15m")
@@ -218,9 +218,11 @@ def run():
                 entry_ts = now_ts
 
                 # 风控
-                allowed, reason = evaluate_risk(all_events, **risk_check)
+                all_events_now = get_all_positions(positions_path)
+                allowed, reason = evaluate_risk(all_events_now, **risk_check)
                 if not allowed:
                     log.info("风控阻挡 %s: %s", sym, reason)
+                    blocked += 1
                     open_position(
                         symbol=sym, strategy=name, params=params,
                         entry_ts=entry_ts, entry_price=entry_price,
@@ -247,7 +249,7 @@ def run():
     log.info("增量扫描完成，本次开单: %d", opened)
 
     # 飞书通知
-    if opened > 0:
+    if opened > 0 or blocked > 0:
         try:
             from quant_trader.execution.notifier import FeishuNotifier, FeishuCardBuilder
             gainer_str = ", ".join(s.replace("/USDT:USDT", "") for s in current_gainers[:5])
@@ -256,7 +258,7 @@ def run():
                 as_of=today,
                 gainer_str=gainer_str,
                 accepted=opened,
-                blocked=0,
+                blocked=blocked,
                 open_pos=len(get_all_positions(positions_path)),
             )
             feishu.send_card(card)

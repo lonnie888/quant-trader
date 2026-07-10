@@ -32,7 +32,6 @@ Fields:
 """
 from __future__ import annotations
 
-import fcntl
 import json
 import logging
 import os
@@ -73,7 +72,13 @@ class PositionEvent:
 
 @contextmanager
 def _file_lock(path: Path):
-    """Acquire an exclusive flock on the log file for safe concurrent read+write."""
+    """Acquire an exclusive flock on the log file for safe concurrent read+write.
+    Falls back to no-op on platforms without fcntl (Windows)."""
+    try:
+        import fcntl
+    except ImportError:
+        yield  # no locking on Windows
+        return
     path.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(str(path), os.O_RDWR | os.O_CREAT)
     try:

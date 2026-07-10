@@ -235,7 +235,7 @@ def main():
         allowed, reason = evaluate_risk(all_events, **risk_check)
         log.info("risk gate: allowed=%s reason=%s", allowed, reason or "-")
         if not allowed:
-            # halt: pass the day's gate reason down to each per-symbol attempt
+            # halt: pass the day's real gate reason to each per-symbol attempt
             for s in signals_log:
                 ev = open_position(
                     symbol=s["symbol"], strategy=s["strategy"], params=s["params"],
@@ -243,6 +243,7 @@ def main():
                     open_day=as_of, log_path=positions_path,
                     risk_check={**risk_check, "max_concurrent": 0},
                 )
+                s["block_reason"] = reason or "max_concurrent"
             blocked = signals_log
             signals_log = []
         else:
