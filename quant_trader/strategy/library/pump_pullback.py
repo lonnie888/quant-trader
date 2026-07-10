@@ -91,12 +91,14 @@ class PumpPullbackStrategy(Strategy):
                     state[i] = 0
                     bars_since_exit += 1
                     continue
-                if close[i] < ema[i] * (1 + trigger_pct):
+                # 第5关：EMA趋势确认（trigger_pct ≤ 0 时跳过）
+                if trigger_pct > 0 and close[i] < ema[i] * (1 + trigger_pct):
                     state[i] = 0
                     bars_since_exit += 1
                     continue
                 short_avg = vol[max(0, i - 6): i + 1].mean()
-                if short_avg < vol_recover * recent_vol:
+                # 第6关：二次放量检查（vol_recover ≤ 1.0 时跳过）
+                if vol_recover > 1.0 and short_avg < vol_recover * recent_vol:
                     state[i] = 0
                     bars_since_exit += 1
                     continue
