@@ -20,7 +20,7 @@ import websockets
 
 log = logging.getLogger(__name__)
 
-WS_BASE = "wss://fapi.binance.com/ws"
+WS_BASE = "wss://fstream.binance.com/ws"
 
 
 class FapiWS:
@@ -77,25 +77,39 @@ class FapiWS:
         except Exception as e:
             log.exception("ws reader error: %s", e)
 
-    async def run(self):
-        """Main loop: connect, subscribe, read; reconnect on failure."""
+    async def run(self, stop_event=None):
+        """Main loop: connect, subscribe, read; reconnect on failure.
+        Returns True if WS connected, False if all attempts failed (caller
+        can fall back to REST polling)."""
         backoff = 1.0
-        while not self._stop:
+        max_attempts = 3
+        attempt = 0
+        connected = False
+        while not self._stop and attempt < max_attempts and not connected:
+            if stop_event and stop_event.is_set():
+                break
+            attempt += 1
             try:
-                log.info("connecting to %s", self.base_url)
-                async with websockets.connect(self.base_url, ping_interval=20, ping_timeout=10) as ws:
+                log.info("connecting to %s (attempt %d/%d)", self.base_url, attempt, max_attempts)
+                async with websockets.connect(self.base_url, ping_interval=20, ping_timeout=10, open_timeout=5) as ws:
                     self._ws = ws
                     if self.subs:
                         await self._send_subscribe(list(self.subs))
                     backoff = 1.0
+                    attempt = 0
+                    connected = True
                     self._reader_task = asyncio.create_task(self._reader())
                     await self._reader_task
+            except (websockets.InvalidStatus, OSError, asyncio.TimeoutError) as e:
+                log.warning("ws connection failed (attempt %d/%d): %s", attempt, max_attempts, e)
             except Exception as e:
                 log.warning("ws disconnected: %s, retry in %.1fs", e, backoff)
-            if self._stop:
+            if self._stop or (stop_event and stop_event.is_set()):
                 break
-            await asyncio.sleep(backoff)
-            backoff = min(backoff * 2, 60.0)
+            if not connected and attempt < max_attempts:
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, 60.0)
+        return connected
 
     async def stop(self):
         self._stop = True

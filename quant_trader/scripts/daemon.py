@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import requests
 import signal
 import sys
 from pathlib import Path
@@ -86,6 +87,54 @@ async def _refresh_sltp_subs(mark: MarkPriceStream, sltp: SLTPWatch, ws: FapiWS)
         await asyncio.sleep(30)
 
 
+async def _rest_poll_loop(settings, kline_loop, sltp, stop_event):
+    """Fallback REST polling when WebSocket is unavailable.
+    Polls mark price every 15s."""
+    from quant_trader.execution.paper_ledger import get_all_positions
+    from pathlib import Path
+
+    positions_path = Path("reports/paper/positions.jsonl")
+    FAPI_TICKER = "https://fapi.binance.com/fapi/v1/ticker/price"
+
+    async def _check_sltp():
+        """Check SL/TP for all open positions via REST ticker prices."""
+        all_events = get_all_positions(positions_path)
+        open_pos = []
+        closed_ids = set()
+        for e in all_events:
+            if e.get("status") in ("closed", "blocked"):
+                closed_ids.add(int(e["id"]))
+        for e in all_events:
+            if e.get("status") == "open" and int(e["id"]) not in closed_ids:
+                open_pos.append(e)
+
+        if not open_pos:
+            return
+
+        # Fetch all tickers in one batch
+        try:
+            r = requests.get(FAPI_TICKER, timeout=10)
+            r.raise_for_status()
+            price_map = {p["symbol"]: float(p["price"]) for p in r.json()}
+        except Exception as e:
+            log.warning("rest poll price fetch failed: %s", e)
+            return
+
+        for ev in open_pos:
+            api_sym = ev["symbol"].split("/")[0].split(":")[0] + "USDT"
+            mark = price_map.get(api_sym)
+            if mark is None:
+                continue
+            sltp.on_mark(ev["symbol"], mark)
+
+    while not stop_event.is_set():
+        try:
+            await _check_sltp()
+        except Exception as e:
+            log.warning("rest poll error: %s", e)
+        await asyncio.sleep(15)
+
+
 async def main():
     settings = load_settings()
     ws = FapiWS()
@@ -112,13 +161,6 @@ async def main():
         sltp.on_mark(sym, mp)
     mark._on_update = on_mark_for_sltp
 
-    # Background tasks
-    tasks = [
-        asyncio.create_task(ws.run(), name="ws"),
-        asyncio.create_task(_refresh_watchlist(ws, kline_loop, sltp, settings), name="watchlist"),
-        asyncio.create_task(_refresh_sltp_subs(mark, sltp, ws), name="sltp_refresh"),
-    ]
-
     # Graceful shutdown
     stop_event = asyncio.Event()
     def _on_signal():
@@ -129,8 +171,25 @@ async def main():
         try:
             loop.add_signal_handler(sig, _on_signal)
         except NotImplementedError:
-            # Windows doesn't support add_signal_handler
             pass
+
+    # Try WebSocket first; if CloudFront blocks it, fall back to REST
+    log.info("connecting to WebSocket (fstream.binance.com)...")
+    ws_connected = await ws.run(stop_event=stop_event)
+    if ws_connected:
+        log.info("✅ WebSocket connected — running realtime mode")
+        tasks = [
+            asyncio.create_task(_refresh_watchlist(ws, kline_loop, sltp, settings), name="watchlist"),
+            asyncio.create_task(_refresh_sltp_subs(mark, sltp, ws), name="sltp_refresh"),
+        ]
+    else:
+        log.warning("⚠️ WebSocket unavailable (CloudFront block) — falling back to REST polling")
+        log.info("  REST polling: mark price every 15s, kline every 15min")
+        log.info("  (less real-time than WebSocket but fully functional)")
+        tasks = [
+            asyncio.create_task(_rest_poll_loop(settings, kline_loop, sltp, stop_event), name="rest_poll"),
+            asyncio.create_task(_refresh_watchlist(ws, kline_loop, sltp, settings), name="watchlist"),
+        ]
 
     log.info("daemon started: watchlist=%d symbols", len(DEFAULT_WATCHLIST))
     try:
