@@ -1,19 +1,30 @@
 # Quant Trader - Production Deployment
 
 A Binance USDT-margined perpetual futures paper-trading system. Scans the
-top-10 24h gainers every day, applies a locked `pump_pullback` strategy
-with a risk gate, persists paper positions, and tracks live PnL against
-the public fapi endpoint.
+top-10 24h gainers, applies a locked `pump_pullback` strategy with a risk
+gate, persists paper positions, and tracks live PnL against the public
+fapi endpoint.
+
+**v0.3.0+ 推荐使用常驻 daemon（WebSocket 实时推送）**而非 cron。详见 [`../docs/daemon.md`](../docs/daemon.md)。
 
 ## Layout
 
 ```
 deploy/
-  setup.sh            one-shot: build venv, install deps, run smoke test
-  run_daily.sh        full daily pipeline (refresh + scan + risk + ledger + recap)
-  quant_trader.cron   crontab fragment (daily 02:00 UTC + every-15min PnL check)
-  README.md           this file
+  setup.sh                       one-shot: build venv, install deps
+  run_daily.sh                   LEGACY: full daily pipeline (refresh + scan + risk + ledger + recap)
+  quant_trader.cron              LEGACY: crontab fragment (daily 02:00 UTC + every-15min PnL check)
+  quant-trader-daemon.service    systemd unit for v0.3.0+ daemon
+  quant-trader-daemon.conf       supervisord config for v0.3.0+ daemon
+  README.md                      this file
 ```
+
+## 部署方式选择
+
+| 方式 | 适用场景 | 实时性 |
+|:----|:--------|:------|
+| **daemon (推荐)** | 生产环境、需要秒级 SL/TP | 秒级 |
+| cron | 旧部署、调试 | 15 分钟 |
 
 ## First-time setup on the server
 
