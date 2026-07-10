@@ -149,7 +149,36 @@ def run():
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     opened = 0
 
+    # 收集最近 timeout 退出的币（冷却期），不让它们立刻重新开仓
+    cooldown_symbols: set[str] = set()
+    now = datetime.now(timezone.utc)
+    for e in all_events:
+        if e.get("status") == "closed" and e.get("exit_reason") == "time":
+            exit_ts = e.get("exit_ts")
+            if exit_ts:
+                try:
+                    exit_dt = datetime.fromisoformat(exit_ts.replace("Z", "+00:00"))
+                    if (now - exit_dt).total_seconds() < 3600:  # 1小时冷却
+                        cooldown_symbols.add(e["symbol"])
+                except Exception:
+                    pass
+    if cooldown_symbols:
+        log.info("冷却期符号(1h内timeout退出): %s", list(cooldown_symbols))
+
+    # 批量拉取所有币种实时价格（替代 N+1 次单独请求）
+    price_cache: dict[str, float] = {}
+    try:
+        pr = requests.get("https://fapi.binance.com/fapi/v1/ticker/price", timeout=10)
+        pr.raise_for_status()
+        for p in pr.json():
+            price_cache[p["symbol"]] = float(p["price"])
+    except Exception as e:
+        log.warning("批量价格拉取失败，回退逐币查询: %s", e)
+
     for sym in current_gainers:
+        if sym in cooldown_symbols:
+            log.info("跳过: %s 在冷却期内（刚timeout退出）", sym)
+            continue
         if _has_open(all_events, sym):
             log.info("跳过: %s 已有持仓", sym)
             continue
@@ -174,13 +203,18 @@ def run():
             if s[-1] == 1 and last_entry >= 0:
                 # 有信号：取当前实时市价开单，而非K线收盘价
                 now_ts = datetime.now(timezone.utc).isoformat()
-                try:
-                    ticker_r = requests.get(FAPI_TICKER, params={"symbol": api_sym}, timeout=10)
-                    ticker_r.raise_for_status()
-                    ticker_data = ticker_r.json()
-                    entry_price = float(ticker_data.get("lastPrice", df.iloc[-1]["close"]))
-                except Exception:
-                    entry_price = float(df.iloc[-1]["close"])
+                current_api_sym = sym.split("/")[0].split(":")[0] + "USDT"
+                cached_price = price_cache.get(current_api_sym)
+                if cached_price is not None:
+                    entry_price = cached_price
+                else:
+                    try:
+                        ticker_r = requests.get(FAPI_TICKER, params={"symbol": current_api_sym}, timeout=10)
+                        ticker_r.raise_for_status()
+                        ticker_data = ticker_r.json()
+                        entry_price = float(ticker_data.get("lastPrice", df.iloc[-1]["close"]))
+                    except Exception:
+                        entry_price = float(df.iloc[-1]["close"])
                 entry_ts = now_ts
 
                 # 风控

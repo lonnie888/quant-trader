@@ -32,8 +32,11 @@ Fields:
 """
 from __future__ import annotations
 
+import fcntl
 import json
 import logging
+import os
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -66,6 +69,19 @@ class PositionEvent:
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), ensure_ascii=False)
+
+
+@contextmanager
+def _file_lock(path: Path):
+    """Acquire an exclusive flock on the log file for safe concurrent read+write."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(str(path), os.O_RDWR | os.O_CREAT)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
 
 
 def _read_log(path: Path) -> list[dict]:
@@ -180,52 +196,53 @@ def open_position(
     Returns the new event, or None if skipped.
     """
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    events = _read_log(log_path)
-    if _has_open(events, symbol):
-        log.info("skip open: %s already has an open position", symbol)
-        return None
+    with _file_lock(log_path):
+        events = _read_log(log_path)
+        if _has_open(events, symbol):
+            log.info("skip open: %s already has an open position", symbol)
+            return None
 
-    if risk_check is not None:
-        allowed, reason = evaluate_risk(events, **risk_check)
-        if not allowed:
-            ev = PositionEvent(
-                id=_next_id(events),
-                status="blocked",
-                symbol=symbol,
-                strategy=strategy,
-                params=dict(params),
-                open_day=open_day or datetime.now(timezone.utc).strftime("%Y-%m-%d"),
-                entry_ts=entry_ts,
-                entry_price=entry_price,
-                sl_price=entry_price * (1 - float(params.get("stop_loss_pct", 0.0))),
-                tp_price=(entry_price * (1 + float(params.get("take_profit_pct", 0.0)))
-                          if float(params.get("take_profit_pct", 0.0)) > 0 else None),
-                leverage=leverage,
-                block_reason=reason,
-            )
-            with open(log_path, "a", encoding="utf-8") as f:
-                f.write(ev.to_json() + "\n")
-            log.info("blocked %s id=%d reason=%s", symbol, ev.id, reason)
-            return ev
+        if risk_check is not None:
+            allowed, reason = evaluate_risk(events, **risk_check)
+            if not allowed:
+                ev = PositionEvent(
+                    id=_next_id(events),
+                    status="blocked",
+                    symbol=symbol,
+                    strategy=strategy,
+                    params=dict(params),
+                    open_day=open_day or datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+                    entry_ts=entry_ts,
+                    entry_price=entry_price,
+                    sl_price=entry_price * (1 - float(params.get("stop_loss_pct", 0.0))),
+                    tp_price=(entry_price * (1 + float(params.get("take_profit_pct", 0.0)))
+                              if float(params.get("take_profit_pct", 0.0)) > 0 else None),
+                    leverage=leverage,
+                    block_reason=reason,
+                )
+                with open(log_path, "a", encoding="utf-8") as f:
+                    f.write(ev.to_json() + "\n")
+                log.info("blocked %s id=%d reason=%s", symbol, ev.id, reason)
+                return ev
 
-    sl = float(params.get("stop_loss_pct", 0.0))
-    tp = float(params.get("take_profit_pct", 0.0))
-    ev = PositionEvent(
-        id=_next_id(events),
-        status="open",
-        symbol=symbol,
-        strategy=strategy,
-        params=dict(params),
-        open_day=open_day or datetime.now(timezone.utc).strftime("%Y-%m-%d"),
-        entry_ts=entry_ts,
-        entry_price=entry_price,
-        sl_price=entry_price * (1 - sl) if sl > 0 else entry_price,
-        tp_price=entry_price * (1 + tp) if tp > 0 else None,
-        leverage=leverage,
-    )
-    with open(log_path, "a", encoding="utf-8") as f:
-        f.write(ev.to_json() + "\n")
-    log.info("opened %s @ %s id=%d sl=%s tp=%s", symbol, entry_price, ev.id, ev.sl_price, ev.tp_price)
+        sl = float(params.get("stop_loss_pct", 0.0))
+        tp = float(params.get("take_profit_pct", 0.0))
+        ev = PositionEvent(
+            id=_next_id(events),
+            status="open",
+            symbol=symbol,
+            strategy=strategy,
+            params=dict(params),
+            open_day=open_day or datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+            entry_ts=entry_ts,
+            entry_price=entry_price,
+            sl_price=entry_price * (1 - sl) if sl > 0 else entry_price,
+            tp_price=entry_price * (1 + tp) if tp > 0 else None,
+            leverage=leverage,
+        )
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(ev.to_json() + "\n")
+        log.info("opened %s @ %s id=%d sl=%s tp=%s", symbol, entry_price, ev.id, ev.sl_price, ev.tp_price)
     return ev
 
 
@@ -256,35 +273,36 @@ def close_position(
     PnL is computed at close time and frozen.
     """
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    events = _read_log(log_path)
-    open_ev = next((e for e in events if e["id"] == position_id and e["status"] == "open"), None)
-    if open_ev is None:
-        log.warning("close: no open event with id=%d", position_id)
-        return None
-    entry = float(open_ev["entry_price"])
-    lev = float(open_ev.get("leverage", 3.0))
-    pnl_pct = (exit_price - entry) / entry if entry > 0 else 0.0
-    pnl_lev = pnl_pct * lev
-    close_ev = PositionEvent(
-        id=position_id,
-        status="closed",
-        symbol=open_ev["symbol"],
-        strategy=open_ev["strategy"],
-        params=open_ev["params"],
-        open_day=open_ev["open_day"],
-        entry_ts=open_ev["entry_ts"],
-        entry_price=entry,
-        sl_price=open_ev["sl_price"],
-        tp_price=open_ev.get("tp_price"),
-        leverage=lev,
-        exit_ts=exit_ts,
-        exit_price=exit_price,
-        exit_reason=exit_reason,
-        pnl_pct=pnl_pct,
-        pnl_pct_lev=pnl_lev,
-    )
-    with open(log_path, "a", encoding="utf-8") as f:
-        f.write(close_ev.to_json() + "\n")
-    log.info("closed %s id=%d @ %s reason=%s pnl=%+.2f%%",
-             open_ev["symbol"], position_id, exit_price, exit_reason, pnl_lev * 100)
+    with _file_lock(log_path):
+        events = _read_log(log_path)
+        open_ev = next((e for e in events if e["id"] == position_id and e["status"] == "open"), None)
+        if open_ev is None:
+            log.warning("close: no open event with id=%d", position_id)
+            return None
+        entry = float(open_ev["entry_price"])
+        lev = float(open_ev.get("leverage", 3.0))
+        pnl_pct = (exit_price - entry) / entry if entry > 0 else 0.0
+        pnl_lev = pnl_pct * lev
+        close_ev = PositionEvent(
+            id=position_id,
+            status="closed",
+            symbol=open_ev["symbol"],
+            strategy=open_ev["strategy"],
+            params=open_ev["params"],
+            open_day=open_ev["open_day"],
+            entry_ts=open_ev["entry_ts"],
+            entry_price=entry,
+            sl_price=open_ev["sl_price"],
+            tp_price=open_ev.get("tp_price"),
+            leverage=lev,
+            exit_ts=exit_ts,
+            exit_price=exit_price,
+            exit_reason=exit_reason,
+            pnl_pct=pnl_pct,
+            pnl_pct_lev=pnl_lev,
+        )
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(close_ev.to_json() + "\n")
+        log.info("closed %s id=%d @ %s reason=%s pnl=%+.2f%%",
+                 open_ev["symbol"], position_id, exit_price, exit_reason, pnl_lev * 100)
     return asdict(close_ev)

@@ -245,8 +245,6 @@ def main():
                 )
             blocked = signals_log
             signals_log = []
-            blocked = signals_log
-            signals_log = []
         else:
             for s in signals_log:
                 ev = open_position(

@@ -6,6 +6,7 @@
     function color(v) { return v >= 0 ? '#0ecb81' : '#f6465d'; }
 
     document.getElementById('unrealized-pnl').innerHTML = `<span style="color:${color(d.unrealized_pnl_pct)}">${d.unrealized_pnl_pct >= 0 ? '+' : ''}${d.unrealized_pnl_pct.toFixed(2)}%</span>`;
+    document.getElementById('total-realized-pnl').innerHTML = `<span style="color:${color(d.total_realized_pnl_pct)}">${d.total_realized_pnl_pct >= 0 ? '+' : ''}${d.total_realized_pnl_pct.toFixed(2)}%</span>`;
     document.getElementById('realized-pnl').innerHTML = `<span style="color:${color(d.realized_pnl_pct)}">${d.realized_pnl_pct >= 0 ? '+' : ''}${d.realized_pnl_pct.toFixed(2)}%</span>`;
     document.getElementById('win-rate').textContent = `${d.win_rate}%`;
     document.getElementById('open-positions').textContent = d.open_count;

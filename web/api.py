@@ -191,6 +191,12 @@ def _compute_summary(open_evs: list[dict], closed_events: list[dict]) -> dict:
                 if pnl > 0:
                     wins += 1
 
+    # All-time realized PnL (sum of all closed trades)
+    total_realized = 0.0
+    for ev in all_closed:
+        pnl = ev.get("pnl_pct_lev", 0.0) or 0.0
+        total_realized += pnl
+
     win_rate = round(wins / total_trades * 100, 1) if total_trades > 0 else 0.0
 
     # Daily PnL series from closed events grouped by day
@@ -212,6 +218,7 @@ def _compute_summary(open_evs: list[dict], closed_events: list[dict]) -> dict:
     return {
         "unrealized_pnl_pct": round(unrealized_pnl, 2),
         "realized_pnl_pct": round(realized_pnl * 100, 2),
+        "total_realized_pnl_pct": round(total_realized * 100, 2),
         "open_count": len(open_evs),
         "closed_count": len(all_closed),
         "wins": wins,

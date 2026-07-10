@@ -44,7 +44,6 @@ class PumpPullbackStrategy(Strategy):
         hold_bars = int(p.get("hold_bars", 24))
         stop_loss_pct = float(p.get("stop_loss_pct", 0.10))
         take_profit_pct = float(p.get("take_profit_pct", 0.0))
-        side_mode = p.get("side", "long_only")
 
         close = df["close"].values
         high = df["high"].values
@@ -105,7 +104,7 @@ class PumpPullbackStrategy(Strategy):
                     state[i] = 0
                     bars_since_exit += 1
                     continue
-                cur = Side.LONG.value if side_mode == "long_only" else Side.SHORT.value
+                cur = Side.LONG.value
                 held = hold_bars
                 bars_since_exit = 0
                 entry_price = close[i]
