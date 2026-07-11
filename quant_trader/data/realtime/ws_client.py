@@ -84,8 +84,7 @@ class FapiWS:
             log.exception("ws reader error: %s", e)
 
     async def run(self, stop_event=None):
-        """Main loop: connect, subscribe, read; reconnect on failure.
-        Returns True if connected, False if all attempts failed."""
+        """Main loop: connect, subscribe, read; reconnect on failure."""
         self._session = aiohttp.ClientSession()
         try:
             max_attempts = 3
@@ -111,10 +110,8 @@ class FapiWS:
                     self._reader_task = asyncio.create_task(self._reader())
                     await self._reader_task
                     break
-                except (aiohttp.ClientConnectorError, asyncio.TimeoutError, OSError) as e:
-                    log.warning("ws connect failed (%d/%d): %s", attempt, max_attempts, e)
                 except Exception as e:
-                    log.warning("ws error: %s, retry in %.1fs", e, backoff)
+                    log.warning("ws connect failed (%d/%d): %s", attempt, max_attempts, e)
                 if not connected and attempt < max_attempts:
                     await asyncio.sleep(backoff)
                     backoff = min(backoff * 2, 60.0)

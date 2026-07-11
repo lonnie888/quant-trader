@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import requests
 import signal
 import sys
@@ -42,7 +43,7 @@ DEFAULT_WATCHLIST: list[str] = []
 
 async def _refresh_watchlist(ws, kline_loop: KlineStrategyLoop, sltp: SLTPWatch,
                              settings, top_n: int = 30):
-    """Periodic task: refresh watchlist from gainers scanner."""
+    """Periodic task: refresh watchlist from gainers scanner and run strategy."""
     while True:
         try:
             client = BinanceClient(api_key="", api_secret="", testnet=False)
@@ -51,13 +52,109 @@ async def _refresh_watchlist(ws, kline_loop: KlineStrategyLoop, sltp: SLTPWatch,
                                        min_quote_volume_24h=20_000_000)
             finally:
                 client.close()
-            syms = [g.symbol.split("/")[0].split(":")[0] + "USDT" for g in gainers]
-            if syms:
-                await kline_loop.subscribe(syms, interval="15m")
-                log.info("watchlist refreshed: %d symbols", len(syms))
+            syms_ccxt = [g.symbol for g in gainers]
+            if not syms_ccxt:
+                await asyncio.sleep(900)
+                continue
+            log.info("watchlist refreshed: %d symbols", len(syms_ccxt))
+
+            # Run strategy on each symbol
+            from quant_trader.strategy.generator.auto_strategy import generate_instances
+            from quant_trader.execution.paper_ledger import get_all_positions, get_open_positions, open_position, _has_open, evaluate_risk
+            from quant_trader.data.storage.parquet_store import ParquetStore
+            from datetime import datetime, timezone
+
+            instances = generate_instances("config/strategies.yaml")
+            positions_path = Path("reports/paper/positions.jsonl")
+            risk_cfg = settings.risk
+            risk_check = {
+                "initial_capital": float(settings.backtest.initial_capital),
+                "max_position_pct": float(risk_cfg.max_position_pct),
+                "max_total_exposure": float(risk_cfg.max_total_exposure),
+                "daily_loss_limit": float(risk_cfg.daily_loss_limit),
+                "max_concurrent": int(risk_cfg.max_concurrent),
+            }
+            today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            opened = 0
+            blocked = 0
+            now = datetime.now(timezone.utc)
+
+            # 1h cooldown for timeout exits
+            cooldown_syms = set()
+            for e in get_all_positions(positions_path):
+                if e.get("status") == "closed" and e.get("exit_reason") == "time":
+                    ts = e.get("exit_ts")
+                    if ts:
+                        try:
+                            dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                            if (now - dt).total_seconds() < 3600:
+                                cooldown_syms.add(e["symbol"])
+                        except Exception:
+                            pass
+
+            store = ParquetStore(settings.data.storage_dir)
+            for sym in syms_ccxt:
+                if sym in cooldown_syms:
+                    continue
+                if _has_open(get_all_positions(positions_path), sym):
+                    continue
+                df = store.load(sym, "15m")
+                if df.empty or len(df) < 100:
+                    continue
+                for name, params, strat in instances:
+                    try:
+                        sigs = strat.generate_signals(df)
+                    except Exception:
+                        continue
+                    if sigs.empty:
+                        continue
+                    s = sigs.values
+                    last_entry = -1
+                    prev = 0
+                    for i, v in enumerate(s):
+                        if v == 1 and prev == 0:
+                            last_entry = i
+                        prev = v
+                    if s[-1] == 1 and last_entry >= 0:
+                        entry_price = float(df.iloc[-1]["close"])
+                        now_ts = datetime.now(timezone.utc).isoformat()
+                        all_events = get_all_positions(positions_path)
+                        allowed, reason = evaluate_risk(all_events, **risk_check)
+                        if not allowed:
+                            blocked += 1
+                            open_position(
+                                symbol=sym, strategy=name, params=params,
+                                entry_ts=now_ts, entry_price=entry_price,
+                                leverage=float(settings.backtest.leverage),
+                                open_day=today, log_path=positions_path,
+                                risk_check=risk_check,
+                            )
+                            continue
+                        ev = open_position(
+                            symbol=sym, strategy=name, params=params,
+                            entry_ts=now_ts, entry_price=entry_price,
+                            leverage=float(settings.backtest.leverage),
+                            open_day=today, log_path=positions_path,
+                            risk_check=risk_check,
+                        )
+                        if ev is not None and ev.status == "open":
+                            opened += 1
+                            log.info("✅ [watchlist] open %s @ %.6f id=%d", sym, entry_price, ev.id)
+            if opened > 0 or blocked > 0:
+                try:
+                    from quant_trader.execution.notifier import FeishuNotifier, FeishuCardBuilder
+                    gainer_str = ", ".join(s.split("/")[0].split(":")[0] for s in syms_ccxt[:5])
+                    feishu = FeishuNotifier()
+                    card = FeishuCardBuilder.make_daily_summary(
+                        as_of=today, gainer_str=gainer_str,
+                        accepted=opened, blocked=blocked,
+                        open_pos=len(get_open_positions(positions_path)),
+                    )
+                    feishu.send_card(card)
+                except Exception:
+                    pass
         except Exception as e:
             log.warning("watchlist refresh failed: %s", e)
-        # Refresh every 15 min
         await asyncio.sleep(900)
 
 
@@ -93,15 +190,26 @@ async def _daily_recap_loop(stop_event):
 
 async def _rest_poll_loop(settings, kline_loop, sltp, stop_event):
     """Fallback REST polling when WebSocket is unavailable.
-    Polls mark price every 15s."""
+    Polls mark price every 15s. Uses aiohttp to avoid blocking the event loop."""
+    import aiohttp
     from quant_trader.execution.paper_ledger import get_all_positions
     from pathlib import Path
 
     positions_path = Path("reports/paper/positions.jsonl")
     FAPI_TICKER = "https://fapi.binance.com/fapi/v1/ticker/price"
+    PROXY = "http://192.168.1.1:7890"
 
-    async def _check_sltp():
-        """Check SL/TP for all open positions via REST ticker prices."""
+    async def _check_sltp() -> None:
+        try:
+            async with aiohttp.ClientSession() as sess:
+                async with sess.get(FAPI_TICKER, proxy=PROXY, timeout=aiohttp.ClientTimeout(total=10)) as r:
+                    r.raise_for_status()
+                    tickers = await r.json()
+        except Exception as e:
+            log.warning("rest poll price fetch failed: %s", e)
+            return
+
+        price_map = {p["symbol"]: float(p["price"]) for p in tickers}
         all_events = get_all_positions(positions_path)
         open_pos = []
         closed_ids = set()
@@ -111,19 +219,8 @@ async def _rest_poll_loop(settings, kline_loop, sltp, stop_event):
         for e in all_events:
             if e.get("status") == "open" and int(e["id"]) not in closed_ids:
                 open_pos.append(e)
-
         if not open_pos:
             return
-
-        # Fetch all tickers in one batch
-        try:
-            r = requests.get(FAPI_TICKER, timeout=10)
-            r.raise_for_status()
-            price_map = {p["symbol"]: float(p["price"]) for p in r.json()}
-        except Exception as e:
-            log.warning("rest poll price fetch failed: %s", e)
-            return
-
         for ev in open_pos:
             api_sym = ev["symbol"].split("/")[0].split(":")[0] + "USDT"
             mark = price_map.get(api_sym)
@@ -199,15 +296,12 @@ async def main():
         asyncio.create_task(_daily_recap_loop(stop_event), name="daily_recap"),
     ]
 
-    # Try WebSocket in the background (may take ~15s through proxy)
-    log.info("connecting to WebSocket in background (fstream.binance.com)...")
-    async def _try_ws():
-        connected = await ws.run(stop_event=stop_event)
-        if connected:
-            log.info("✅ WebSocket online — kline strategy running on bar close")
-        else:
-            log.info("ℹ️ WebSocket unavailable — kline strategy disabled, REST polling active")
-    tasks.append(asyncio.create_task(_try_ws(), name="ws_try"))
+    # WebSocket 在当前网络环境的 daemon 中无法稳定连接（aiohttp ws_connect
+    # 通过 HTTP CONNECT 代理在 asyncio 事件循环中挂死，但独立测试可通）。
+    # daemon 完全由 REST 轮询 + watchlist 驱动，功能等价于 15m K 线精度。
+    # 实盘部署到其他服务器后再启用 WS。
+    log.info("WebSocket disabled (incompatible with proxy in this environment).")
+    log.info("REST polling (15s SL/TP) + watchlist (15min kline) active.")
 
     log.info("daemon started: watchlist=%d symbols", len(DEFAULT_WATCHLIST))
     try:
