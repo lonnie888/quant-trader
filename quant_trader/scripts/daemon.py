@@ -94,12 +94,56 @@ async def _refresh_watchlist(ws, kline_loop: KlineStrategyLoop, sltp: SLTPWatch,
                             pass
 
             store = ParquetStore(settings.data.storage_dir)
+            FAPI_KLINE = "https://fapi.binance.com/fapi/v1/klines"
+
             for sym in syms_ccxt:
                 if sym in cooldown_syms:
                     continue
                 if _has_open(get_all_positions(positions_path), sym):
                     continue
+
+                # 检查缓存新鲜度，不足 3 小时则拉新数据
                 df = store.load(sym, "15m")
+                now = datetime.now(timezone.utc)
+                need_fetch = False
+                if df.empty or len(df) < 100:
+                    need_fetch = True
+                else:
+                    last_ts = df.index[-1]
+                    if (now - last_ts).total_seconds() > 10800:  # 3h
+                        need_fetch = True
+
+                if need_fetch:
+                    api_sym = sym.split("/")[0].split(":")[0] + "USDT"
+                    try:
+                        start_ms = int((now - __import__("datetime").timedelta(days=7)).timestamp() * 1000)
+                        end_ms = int(now.timestamp() * 1000)
+                        url = f"{FAPI_KLINE}?symbol={api_sym}&interval=15m&startTime={start_ms}&endTime={end_ms}&limit=1000"
+                        import requests as _rq
+                        r = _rq.get(url, timeout=15)
+                        r.raise_for_status()
+                        raw = r.json()
+                        if raw:
+                            import pandas as _pd
+                            _rows = []
+                            for row in raw:
+                                _rows.append({
+                                    "timestamp": int(row[0]),
+                                    "open": float(row[1]),
+                                    "high": float(row[2]),
+                                    "low": float(row[3]),
+                                    "close": float(row[4]),
+                                    "volume": float(row[5]),
+                                })
+                            _df = _pd.DataFrame(_rows)
+                            _df["timestamp"] = _pd.to_datetime(_df["timestamp"], unit="ms", utc=True)
+                            _df = _df.set_index("timestamp")
+                            store.save(sym, "15m", _df)
+                            df = _df
+                            log.info("下载K线 %s: %d 行", api_sym, len(_df))
+                    except Exception as e:
+                        log.warning("下载K线失败 %s: %s", api_sym, e)
+
                 if df.empty or len(df) < 100:
                     continue
                 for name, params, strat in instances:
