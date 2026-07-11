@@ -42,7 +42,8 @@ DEFAULT_WATCHLIST: list[str] = []
 
 
 async def _refresh_watchlist(ws, kline_loop: KlineStrategyLoop, sltp: SLTPWatch,
-                             settings, top_n: int = 30):
+                             settings, top_n: int = 30,
+                             refresh_event: asyncio.Event | None = None):
     """Periodic task: refresh watchlist from gainers scanner and run strategy."""
     while True:
         try:
@@ -155,7 +156,108 @@ async def _refresh_watchlist(ws, kline_loop: KlineStrategyLoop, sltp: SLTPWatch,
                     pass
         except Exception as e:
             log.warning("watchlist refresh failed: %s", e)
+        # Signal positions_report task that a refresh cycle is complete
+        if refresh_event is not None:
+            refresh_event.set()
         await asyncio.sleep(900)
+
+
+async def _positions_report_loop(settings, stop_event, watchlist_event: asyncio.Event):
+    """Send positions check card to Feishu when watchlist refresh completes
+    (i.e. every 15 minutes after a new 15m K-line closes)."""
+    from datetime import datetime, timezone
+    from quant_trader.execution.notifier import FeishuNotifier, FeishuCardBuilder
+    from quant_trader.execution.paper_ledger import get_all_positions
+    from pathlib import Path
+    import requests as sync_req
+
+    FAPI_TICKER = "https://fapi.binance.com/fapi/v1/ticker/price"
+    PROXY = "http://192.168.1.1:7890"
+    positions_path = Path("reports/paper/positions.jsonl")
+
+    def _fetch_prices_sync():
+        return sync_req.get(FAPI_TICKER, proxies={"http": PROXY, "https": PROXY}, timeout=10).json()
+
+    while not stop_event.is_set():
+        # Wait for watchlist to finish a refresh cycle
+        try:
+            await asyncio.wait_for(watchlist_event.wait(), timeout=300.0)
+            watchlist_event.clear()
+        except asyncio.TimeoutError:
+            continue  # safety: fire anyway every 5 min
+        if stop_event.is_set():
+            break
+        try:
+            open_pos = []
+            closed_ids = set()
+            all_events = get_all_positions(positions_path)
+            for e in all_events:
+                if e.get("status") in ("closed", "blocked"):
+                    closed_ids.add(int(e["id"]))
+            for e in all_events:
+                if e.get("status") == "open" and int(e["id"]) not in closed_ids:
+                    open_pos.append(e)
+
+            today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            realized_today = 0.0
+            for e in all_events:
+                if e.get("status") == "closed" and e.get("exit_ts", "").startswith(today):
+                    realized_today += e.get("pnl_pct_lev", 0.0) or 0.0
+
+            price_map = {}
+            try:
+                tickers = _fetch_prices_sync()
+                price_map = {p["symbol"]: float(p["price"]) for p in tickers}
+            except Exception as e:
+                log.warning("positions report: ticker fetch failed: %s", e)
+
+            positions_data = []
+            total_unrealized = 0.0
+            for ev in open_pos:
+                api_sym = ev["symbol"].split("/")[0].split(":")[0] + "USDT"
+                entry = float(ev["entry_price"])
+                mark = price_map.get(api_sym, entry)
+                pnl_pct = (mark - entry) / entry if entry else 0.0
+                lev = float(ev.get("leverage", 3.0))
+                pnl_lev = pnl_pct * lev
+                total_unrealized += pnl_lev
+                remaining_bars = int(ev["params"].get("hold_bars", 24))
+                # Calculate actual remaining bars based on elapsed time
+                entry_ts = ev.get("entry_ts", "")
+                if entry_ts:
+                    try:
+                        ed = datetime.fromisoformat(entry_ts.replace("Z", "+00:00"))
+                        now = datetime.now(timezone.utc)
+                        elapsed_bars = int((now - ed).total_seconds() / (15 * 60))
+                        remaining_bars = max(0, remaining_bars - elapsed_bars)
+                    except Exception:
+                        pass
+                positions_data.append({
+                    "symbol": ev["symbol"],
+                    "entry_price": entry,
+                    "last_close": mark,
+                    "pnl_pct_lev": pnl_lev,
+                    "remaining_bars": remaining_bars,
+                    "max_favorable_pct": 0.0,
+                    "max_adverse_pct": 0.0,
+                })
+
+            total_closed = sum(1 for e in all_events if e.get("status") == "closed")
+            profitable = sum(1 for p in positions_data if p["pnl_pct_lev"] > 0)
+
+            card = FeishuCardBuilder.make_positions_check(
+                today=today,
+                total_unrealized_pct=total_unrealized * 100,
+                total_realized_pct=realized_today * 100,
+                open_count=len(open_pos),
+                closed_count=total_closed,
+                profitable=profitable,
+                positions=positions_data,
+            )
+            FeishuNotifier().send_card(card)
+            log.info("positions report sent (after kline close): %d open", len(open_pos))
+        except Exception as e:
+            log.warning("positions report failed: %s", e)
 
 
 async def _daily_recap_loop(stop_event):
@@ -290,10 +392,17 @@ async def main():
             pass
 
     # Start REST polling and watchlist immediately (don't wait for WS)
+    # Event to signal positions_report task that a watchlist refresh completed
+    refresh_event = asyncio.Event()
+
     tasks = [
         asyncio.create_task(_rest_poll_loop(settings, kline_loop, sltp, stop_event), name="rest_poll"),
-        asyncio.create_task(_refresh_watchlist(ws, kline_loop, sltp, settings), name="watchlist"),
+        asyncio.create_task(
+            _refresh_watchlist(ws, kline_loop, sltp, settings, refresh_event=refresh_event),
+            name="watchlist",
+        ),
         asyncio.create_task(_daily_recap_loop(stop_event), name="daily_recap"),
+        asyncio.create_task(_positions_report_loop(settings, stop_event, refresh_event), name="positions_report"),
     ]
 
     # WebSocket 在当前网络环境的 daemon 中无法稳定连接（aiohttp ws_connect

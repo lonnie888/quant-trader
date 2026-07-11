@@ -66,10 +66,14 @@ class FeishuCardBuilder:
 
         # --- Individual positions ---
         for r in positions:
-            pnl = r["closed_pnl_pct_lev"] if r["closed_pnl_pct_lev"] is not None else r["current_pnl_pct_lev"]
+            # Accept both new (pnl_pct_lev) and old (closed/current) schemas
+            if "closed_pnl_pct_lev" in r or "current_pnl_pct_lev" in r:
+                pnl = r["closed_pnl_pct_lev"] if r.get("closed_pnl_pct_lev") is not None else r.get("current_pnl_pct_lev", 0)
+            else:
+                pnl = r.get("pnl_pct_lev", 0) or 0
             pct = pnl * 100
             sym_short = r["symbol"].replace("/USDT:USDT", "")
-            is_closed = r["exit_reason"] is not None
+            is_closed = r.get("exit_reason") is not None
 
             if is_closed:
                 emoji = {"stop_loss": "🛑", "take_profit": "💰", "time": "⏰"}.get(r["exit_reason"], "❌")

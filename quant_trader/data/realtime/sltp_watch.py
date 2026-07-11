@@ -45,9 +45,21 @@ class SLTPWatch:
         self.subscribed.add(symbol.upper())
 
     def on_mark(self, symbol: str, mark_price: float):
-        for pos_id, pos in list(self.open_positions.items()):
+        # Always re-read open positions from ledger (avoids stale in-memory state).
+        from quant_trader.execution.paper_ledger import get_all_positions
+        all_events = get_all_positions()
+        closed_ids = set()
+        for e in all_events:
+            if e.get("status") in ("closed", "blocked"):
+                closed_ids.add(int(e["id"]))
+        live_open = [
+            e for e in all_events
+            if e.get("status") == "open" and int(e["id"]) not in closed_ids
+        ]
+        for pos in live_open:
             if pos["symbol"].upper() != symbol.upper():
                 continue
+            pos_id = int(pos["id"])
             try:
                 entry = float(pos["entry_price"])
                 sl = float(pos["sl_price"])
@@ -95,7 +107,6 @@ class SLTPWatch:
             )
             if closed:
                 log.info("closed id=%d %s @ %.6f reason=%s", pos_id, symbol, exit_price, exit_reason)
-                del self.open_positions[pos_id]
                 if self.on_close is not None:
                     try:
                         self.on_close(closed)
