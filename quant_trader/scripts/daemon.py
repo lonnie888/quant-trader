@@ -117,7 +117,21 @@ async def _refresh_watchlist(ws, kline_loop: KlineStrategyLoop, sltp: SLTPWatch,
                             last_entry = i
                         prev = v
                     if s[-1] == 1 and last_entry >= 0:
-                        entry_price = float(df.iloc[-1]["close"])
+                        # 实时价格：拉 ticker 开单，不用缓存 K 线收盘价
+                        api_sym = sym.split("/")[0].split(":")[0] + "USDT"
+                        ticker_price = None
+                        try:
+                            import requests as _req
+                            _r = _req.get(
+                                "https://fapi.binance.com/fapi/v1/ticker/price",
+                                params={"symbol": api_sym},
+                                timeout=5,
+                            )
+                            _r.raise_for_status()
+                            ticker_price = float(_r.json()["price"])
+                        except Exception as e:
+                            log.warning("实时价格拉取失败 %s: %s", api_sym, e)
+                        entry_price = ticker_price if ticker_price else float(df.iloc[-1]["close"])
                         now_ts = datetime.now(timezone.utc).isoformat()
                         all_events = get_all_positions(positions_path)
                         allowed, reason = evaluate_risk(all_events, **risk_check)
