@@ -144,10 +144,10 @@ async def _refresh_watchlist(ws, kline_loop: KlineStrategyLoop, sltp: SLTPWatch,
             if opened > 0 or blocked > 0:
                 try:
                     from quant_trader.execution.notifier import FeishuNotifier, FeishuCardBuilder
-                    gainer_str = ", ".join(s.split("/")[0].split(":")[0] for s in syms_ccxt[:5])
+                    gainer_pairs = [(g.symbol.split("/")[0].split(":")[0], float(g.pct_change_24h)) for g in gainers]
                     feishu = FeishuNotifier()
                     card = FeishuCardBuilder.make_daily_summary(
-                        as_of=today, gainer_str=gainer_str,
+                        as_of=today, gainers=gainer_pairs,
                         accepted=opened, blocked=blocked,
                         open_pos=len(get_open_positions(positions_path)),
                     )

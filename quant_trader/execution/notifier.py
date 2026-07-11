@@ -45,10 +45,7 @@ class FeishuCardBuilder:
                              total_realized_pct: float, open_count: int,
                              closed_count: int, profitable: int,
                              positions: list[dict]) -> dict:
-        """Build an interactive card for positions check summary."""
         elements = []
-
-        # --- Summary row ---
         elements.append({
             "tag": "div",
             "fields": [
@@ -64,9 +61,7 @@ class FeishuCardBuilder:
         })
         elements.append({"tag": "hr"})
 
-        # --- Individual positions ---
         for r in positions:
-            # Accept both new (pnl_pct_lev) and old (closed/current) schemas
             if "closed_pnl_pct_lev" in r or "current_pnl_pct_lev" in r:
                 pnl = r["closed_pnl_pct_lev"] if r.get("closed_pnl_pct_lev") is not None else r.get("current_pnl_pct_lev", 0)
             else:
@@ -77,7 +72,6 @@ class FeishuCardBuilder:
 
             if is_closed:
                 emoji = {"stop_loss": "🛑", "take_profit": "💰", "time": "⏰"}.get(r["exit_reason"], "❌")
-                color_tag = "red" if pnl < 0 else "green"
                 content = (
                     f"{emoji} **{sym_short}** — 已{r['exit_reason']}\n"
                     f"入场 `{r['entry_price']:.6f}` → 退出 `{r['exit_price']:.6f}`\n"
@@ -88,22 +82,19 @@ class FeishuCardBuilder:
                 content = (
                     f"{dot} **{sym_short}**\n"
                     f"入场 `{r['entry_price']:.6f}`  当前 `{r['last_close']:.6f}`\n"
-                    f"收益: **{pct:+.2f}%**  |  剩余: {r['remaining_bars']} bars"
+                    f"收益: **{pct:+.2f}%**  |  剩余: {r.get('remaining_bars', '?')} bars"
                 )
-
             elements.append({
                 "tag": "div",
                 "text": {"tag": "lark_md", "content": content},
             })
 
-        # --- Footer ---
         elements.append({
             "tag": "note",
             "elements": [{"tag": "plain_text",
                           "content": f"⏱ {today} 自动检查 · pump_pullback 策略"}],
         })
 
-        # Determine header color based on overall PnL
         if total_unrealized_pct + total_realized_pct > 10:
             header_template = "green"
         elif total_unrealized_pct + total_realized_pct > 0:
@@ -124,12 +115,12 @@ class FeishuCardBuilder:
         }
 
     @staticmethod
-    def make_daily_summary(as_of: str, gainer_str: str,
+    def make_daily_summary(as_of: str, gainers: list[tuple[str, float]],
                            accepted: int, blocked: int, open_pos: int) -> dict:
-        """Build an interactive card for daily signal summary."""
+        """Build daily signal summary card. gainers: list of (symbol_short, pct_24h)."""
         if accepted > 0:
             header_template = "green"
-            subtitle = f"🎯 今日 {accepted} 个开仓信号"
+            subtitle = f"🎯 {accepted} 个开仓信号"
         elif blocked > 0:
             header_template = "orange"
             subtitle = "⛔ 全部被风控阻挡"
@@ -137,12 +128,20 @@ class FeishuCardBuilder:
             header_template = "blue"
             subtitle = "⏳ 无信号"
 
+        gainer_lines = []
+        for sym, pct in gainers[:15]:
+            arrow = "🟢" if pct > 0 else "🔴"
+            gainer_lines.append(f"{arrow} {sym} {pct:+.2f}%")
+        if len(gainers) > 15:
+            gainer_lines.append(f"... +{len(gainers) - 15} more")
+        gainer_text = "\n".join(gainer_lines)
+
         elements = [
             {
                 "tag": "div",
                 "fields": [
                     {"is_short": True, "text": {"tag": "lark_md",
-                     "content": f"**🔥 涨幅TOP**\n{gainer_str}"}},
+                     "content": f"**🔥 涨幅TOP30**\n{gainer_text}"}},
                     {"is_short": True, "text": {"tag": "lark_md",
                      "content": f"**📊 概况**\n{subtitle}"}},
                 ],
@@ -156,13 +155,13 @@ class FeishuCardBuilder:
                     {"is_short": True, "text": {"tag": "lark_md",
                      "content": f"**⛔ 风控阻挡**\n{blocked}"}},
                     {"is_short": True, "text": {"tag": "lark_md",
-                     "content": f"**📦 总持仓**\n{open_pos} Open"}},
+                     "content": f"**📦 持仓**\n{open_pos} Open"}},
                 ],
             },
             {
                 "tag": "note",
                 "elements": [{"tag": "plain_text",
-                              "content": f"⏱ {as_of} · pump_pullback 策略 · 每日 02:00 UTC"}],
+                              "content": f"⏱ {as_of} · pump_pullback 策略 · watchlist 15min"}],
             },
         ]
 
@@ -170,8 +169,7 @@ class FeishuCardBuilder:
             "msg_type": "interactive",
             "card": {
                 "header": {
-                    "title": {"tag": "plain_text",
-                              "content": "📈 每日量化信号"},
+                    "title": {"tag": "plain_text", "content": "📈 每日量化信号"},
                     "template": header_template,
                 },
                 "elements": elements,
@@ -183,7 +181,6 @@ class FeishuCardBuilder:
                             entry_price: float, exit_price: float,
                             pnl_pct_lev: float,
                             max_fav_pct: float, max_adv_pct: float) -> dict:
-        """Build an interactive card for a closed position."""
         reason_cn = {"stop_loss": "止损", "take_profit": "止盈", "time": "时间到期"}.get(exit_reason, exit_reason)
         sym_short = symbol.replace("/USDT:USDT", "")
         is_win = pnl_pct_lev > 0
@@ -200,9 +197,9 @@ class FeishuCardBuilder:
                     {"is_short": True, "text": {"tag": "lark_md",
                      "content": f"**退出**\n`{exit_price:.6f}`"}},
                     {"is_short": True, "text": {"tag": "lark_md",
-                     "content": f"**收益(杠杆)**\n{sign}{pnl_pct_lev*100:.2f}%"}},
+                     "content": f"**收益(杠杆)**\n{sign}{pnl_pct_lev * 100:.2f}%"}},
                     {"is_short": True, "text": {"tag": "lark_md",
-                     "content": f"**最大浮盈/浮亏**\n+{max_fav_pct*100:.2f}% / {max_adv_pct*100:.2f}%"}},
+                     "content": f"**最大浮盈/浮亏**\n+{max_fav_pct * 100:.2f}% / {max_adv_pct * 100:.2f}%"}},
                 ],
             },
             {
@@ -226,32 +223,23 @@ class FeishuCardBuilder:
 
 
 class FeishuNotifier:
-    """Simple Feishu/Lark bot webhook notifier."""
-
     def __init__(self, webhook_url: Optional[str] = None):
         self.webhook_url = webhook_url or FEISHU_DEFAULT_URL
 
     def send(self, message: str) -> bool:
         if not self.webhook_url:
-            log.debug("feishu notifier disabled: no webhook url")
             return False
         try:
-            r = requests.post(
-                self.webhook_url,
-                json={"msg_type": "text", "content": {"text": message}},
-                timeout=10,
-            )
+            r = requests.post(self.webhook_url,
+                              json={"msg_type": "text", "content": {"text": message}}, timeout=10)
             r.raise_for_status()
-            log.info("feishu notification sent")
             return True
         except Exception as e:
             log.warning("feishu send failed: %s", e)
             return False
 
     def send_card(self, card: dict) -> bool:
-        """Send an interactive card (msg_type: interactive)."""
         if not self.webhook_url:
-            log.debug("feishu notifier disabled: no webhook url")
             return False
         try:
             r = requests.post(self.webhook_url, json=card, timeout=10)
