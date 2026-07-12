@@ -101,49 +101,39 @@ async def _refresh_watchlist(ws, kline_loop: KlineStrategyLoop, sltp: SLTPWatch,
                 if _has_open(get_all_positions(positions_path), sym):
                     continue
 
-                # 检查缓存新鲜度，不足 3 小时则拉新数据
-                df = store.load(sym, "15m")
+                # 每次都拉新数据，确保策略基于最新行情判断
+                df = None
                 now = datetime.now(timezone.utc)
-                need_fetch = False
-                if df.empty or len(df) < 100:
-                    need_fetch = True
-                else:
-                    last_ts = df.index[-1]
-                    if (now - last_ts).total_seconds() > 10800:  # 3h
-                        need_fetch = True
+                api_sym = sym.split("/")[0].split(":")[0] + "USDT"
+                try:
+                    start_ms = int((now - datetime.timedelta(days=7)).timestamp() * 1000)
+                    end_ms = int(now.timestamp() * 1000)
+                    url = f"{FAPI_KLINE}?symbol={api_sym}&interval=15m&startTime={start_ms}&endTime={end_ms}&limit=1000"
+                    import requests as _rq
+                    r = _rq.get(url, timeout=15)
+                    r.raise_for_status()
+                    raw = r.json()
+                    if raw:
+                        import pandas as _pd
+                        _rows = []
+                        for row in raw:
+                            _rows.append({
+                                "timestamp": int(row[0]), "open": float(row[1]),
+                                "high": float(row[2]), "low": float(row[3]),
+                                "close": float(row[4]), "volume": float(row[5]),
+                            })
+                        _df = _pd.DataFrame(_rows)
+                        _df["timestamp"] = _pd.to_datetime(_df["timestamp"], unit="ms", utc=True)
+                        _df = _df.set_index("timestamp")
+                        store.save(sym, "15m", _df)
+                        df = _df
+                except Exception as e:
+                    log.warning("下载K线失败 %s: %s, 回退缓存", api_sym, e)
 
-                if need_fetch:
-                    api_sym = sym.split("/")[0].split(":")[0] + "USDT"
-                    try:
-                        start_ms = int((now - datetime.timedelta(days=7)).timestamp() * 1000)
-                        end_ms = int(now.timestamp() * 1000)
-                        url = f"{FAPI_KLINE}?symbol={api_sym}&interval=15m&startTime={start_ms}&endTime={end_ms}&limit=1000"
-                        import requests as _rq
-                        r = _rq.get(url, timeout=15)
-                        r.raise_for_status()
-                        raw = r.json()
-                        if raw:
-                            import pandas as _pd
-                            _rows = []
-                            for row in raw:
-                                _rows.append({
-                                    "timestamp": int(row[0]),
-                                    "open": float(row[1]),
-                                    "high": float(row[2]),
-                                    "low": float(row[3]),
-                                    "close": float(row[4]),
-                                    "volume": float(row[5]),
-                                })
-                            _df = _pd.DataFrame(_rows)
-                            _df["timestamp"] = _pd.to_datetime(_df["timestamp"], unit="ms", utc=True)
-                            _df = _df.set_index("timestamp")
-                            store.save(sym, "15m", _df)
-                            df = _df
-                            log.info("下载K线 %s: %d 行", api_sym, len(_df))
-                    except Exception as e:
-                        log.warning("下载K线失败 %s: %s", api_sym, e)
-
-                if df.empty or len(df) < 100:
+                # 拉新失败时回退缓存，缓存也没有则跳过
+                if df is None or df.empty or len(df) < 100:
+                    df = store.load(sym, "15m")
+                if df is None or df.empty or len(df) < 100:
                     continue
                 for name, params, strat in instances:
                     try:
