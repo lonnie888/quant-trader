@@ -1,0 +1,63 @@
+# ============================================================
+# Quant Trader — 配置模板
+# 复制此文件为 config/settings.yaml 并填入实际值
+#   cp config/settings.yaml.template config/settings.yaml
+# ============================================================
+
+# Binance API（模拟盘可留空）
+binance:
+  api_key: "YOUR_API_KEY"
+  api_secret: "YOUR_API_SECRET"
+  testnet: false
+  recv_window_ms: 5000
+
+universe:
+  quote: "USDT"
+  top_n: 10
+  min_quote_volume_24h: 20000000
+  exclude: ["BUSDUSDT", "BTCDOMUSDT", "USDCUSDT"]
+
+data:
+  storage_dir: "./data_store"
+  timeframes: ["15m"]
+  lookback_days: 90
+  funding_rate: false
+
+backtest:
+  initial_capital: 10000.0
+  leverage: 3
+  fee_rate: 0.0004
+  slippage_bps: 5
+  use_funding: false
+  liquidation_buffer: 0.05
+
+scoring:
+  weight_return: 3.0
+  weight_sharpe: 0.5
+  weight_winrate: 0.3
+  weight_drawdown: 0.5
+  weight_profit_factor: 0.5
+  constraints:
+    max_drawdown: 0.30
+    min_sharpe: 0.3
+    min_trades: 3
+
+# 风控参数
+risk:
+  max_position_pct: 0.10
+  max_total_exposure: 0.30
+  daily_loss_limit: 0.30
+  stop_loss_pct: 0.15
+  take_profit_pct: 0.0
+  max_concurrent: 3
+
+# 飞书通知（必填）
+notify:
+  enabled: true
+  feishu_webhook: "https://open.feishu.cn/open-apis/bot/v2/hook/<YOUR_TOKEN>"
+  telegram:
+    bot_token: ""
+    chat_id: ""
+
+# HTTP 代理（国内访问 Binance 必填，路由器 nikki mihomo 默认为此地址）
+proxy: "http://192.168.1.1:7890"

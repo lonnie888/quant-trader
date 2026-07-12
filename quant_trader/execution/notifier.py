@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
 from typing import Optional
 
 import requests
@@ -12,28 +11,44 @@ log = logging.getLogger(__name__)
 FEISHU_DEFAULT_URL = None  # must be set via config or env var
 
 
-@dataclass
-class TelegramConfig:
-    bot_token: str
-    chat_id: str
-    enabled: bool = True
+class FeishuNotifier:
+    """Simple Feishu/Lark bot webhook notifier."""
 
-
-class Notifier:
-    def __init__(self, config: TelegramConfig):
-        self.config = config
+    def __init__(self, webhook_url: Optional[str] = None):
+        self.webhook_url = webhook_url or FEISHU_DEFAULT_URL
+        if not self.webhook_url:
+            log.warning(
+                "FeishuNotifier: no webhook_url provided. "
+                "Set notify.feishu_webhook in config/settings.yaml "
+                "or pass webhook_url= to FeishuNotifier()."
+            )
 
     def send(self, message: str) -> bool:
-        if not self.config.enabled or not self.config.bot_token or not self.config.chat_id:
-            log.debug("telegram notifier disabled or missing config")
+        if not self.webhook_url:
             return False
-        url = f"https://api.telegram.org/bot{self.config.bot_token}/sendMessage"
         try:
-            r = requests.post(url, json={"chat_id": self.config.chat_id, "text": message}, timeout=10)
+            r = requests.post(
+                self.webhook_url,
+                json={"msg_type": "text", "content": {"text": message}},
+                timeout=10,
+            )
             r.raise_for_status()
+            log.info("feishu notification sent")
             return True
         except Exception as e:
-            log.warning("telegram send failed: %s", e)
+            log.warning("feishu send failed: %s", e)
+            return False
+
+    def send_card(self, card: dict) -> bool:
+        if not self.webhook_url:
+            return False
+        try:
+            r = requests.post(self.webhook_url, json=card, timeout=10)
+            r.raise_for_status()
+            log.info("feishu card sent")
+            return True
+        except Exception as e:
+            log.warning("feishu card send failed: %s", e)
             return False
 
 
@@ -218,34 +233,5 @@ class FeishuCardBuilder:
                     "template": template,
                 },
                 "elements": elements,
-            },
-        }
-
-
-class FeishuNotifier:
-    def __init__(self, webhook_url: Optional[str] = None):
-        self.webhook_url = webhook_url or FEISHU_DEFAULT_URL
-
-    def send(self, message: str) -> bool:
-        if not self.webhook_url:
-            return False
-        try:
-            r = requests.post(self.webhook_url,
-                              json={"msg_type": "text", "content": {"text": message}}, timeout=10)
-            r.raise_for_status()
-            return True
-        except Exception as e:
-            log.warning("feishu send failed: %s", e)
-            return False
-
-    def send_card(self, card: dict) -> bool:
-        if not self.webhook_url:
-            return False
-        try:
-            r = requests.post(self.webhook_url, json=card, timeout=10)
-            r.raise_for_status()
-            log.info("feishu card sent")
-            return True
-        except Exception as e:
-            log.warning("feishu card send failed: %s", e)
-            return False
+                            }
+                        }
