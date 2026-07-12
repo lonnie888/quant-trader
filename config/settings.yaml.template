@@ -51,10 +51,10 @@ risk:
   take_profit_pct: 0.0
   max_concurrent: 3
 
-# 飞书通知（必填）
+# 飞书通知（留空则不发）
 notify:
   enabled: true
-  feishu_webhook: "https://open.feishu.cn/open-apis/bot/v2/hook/<YOUR_TOKEN>"
+  feishu_webhook: ""
   telegram:
     bot_token: ""
     chat_id: ""

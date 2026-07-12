@@ -21,8 +21,8 @@ import aiohttp
 
 log = logging.getLogger(__name__)
 
-WS_BASE = "wss://fstream.binance.com/ws"
-PROXY = "http://192.168.1.1:7890"  # nikki mihomo proxy on router
+WS_BASE = "wss://fapi.binance.com/ws"
+PROXY = None  # set via settings.yaml proxy field
 
 
 class FapiWS:
