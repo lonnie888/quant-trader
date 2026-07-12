@@ -191,4 +191,4 @@
 | `_daily_recap_loop` | 每天08:00(北京) | 每日复盘 |
 | `sltp_watch.on_mark` | ~15s | SL/TP判定+close_position+飞书通知 |
 
-*最后更新: 2026-07-12 | v0.3.3*
+*最后更新: 2026-07-12 | v0.3.6*
