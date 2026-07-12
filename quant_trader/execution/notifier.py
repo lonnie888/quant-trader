@@ -9,7 +9,7 @@ import requests
 
 log = logging.getLogger(__name__)
 
-FEISHU_DEFAULT_URL = "https://open.feishu.cn/open-apis/bot/v2/hook/728e02b0-50b7-4430-8539-d6aabc9872d4"
+FEISHU_DEFAULT_URL = None  # must be set via config or env var
 
 
 @dataclass

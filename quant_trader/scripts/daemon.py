@@ -13,10 +13,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
-import requests
 import signal
 import sys
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -63,7 +62,7 @@ async def _refresh_watchlist(ws, kline_loop: KlineStrategyLoop, sltp: SLTPWatch,
             from quant_trader.strategy.generator.auto_strategy import generate_instances
             from quant_trader.execution.paper_ledger import get_all_positions, get_open_positions, open_position, _has_open, evaluate_risk
             from quant_trader.data.storage.parquet_store import ParquetStore
-            from datetime import datetime, timezone
+            from datetime import datetime, timezone, timedelta
 
             instances = generate_instances("config/strategies.yaml")
             positions_path = Path("reports/paper/positions.jsonl")
@@ -116,7 +115,7 @@ async def _refresh_watchlist(ws, kline_loop: KlineStrategyLoop, sltp: SLTPWatch,
                 if need_fetch:
                     api_sym = sym.split("/")[0].split(":")[0] + "USDT"
                     try:
-                        start_ms = int((now - __import__("datetime").timedelta(days=7)).timestamp() * 1000)
+                        start_ms = int((now - datetime.timedelta(days=7)).timestamp() * 1000)
                         end_ms = int(now.timestamp() * 1000)
                         url = f"{FAPI_KLINE}?symbol={api_sym}&interval=15m&startTime={start_ms}&endTime={end_ms}&limit=1000"
                         import requests as _rq
@@ -203,7 +202,8 @@ async def _refresh_watchlist(ws, kline_loop: KlineStrategyLoop, sltp: SLTPWatch,
                 try:
                     from quant_trader.execution.notifier import FeishuNotifier, FeishuCardBuilder
                     gainer_pairs = [(g.symbol.split("/")[0].split(":")[0], float(g.pct_change_24h)) for g in gainers]
-                    feishu = FeishuNotifier()
+                    fw = getattr(settings.notify, "feishu_webhook", None)
+                    feishu = FeishuNotifier(webhook_url=fw)
                     card = FeishuCardBuilder.make_daily_summary(
                         as_of=today, gainers=gainer_pairs,
                         accepted=opened, blocked=blocked,
@@ -221,16 +221,15 @@ async def _refresh_watchlist(ws, kline_loop: KlineStrategyLoop, sltp: SLTPWatch,
 
 
 async def _positions_report_loop(settings, stop_event, watchlist_event: asyncio.Event):
-    """Send positions check card to Feishu when watchlist refresh completes
-    (i.e. every 15 minutes after a new 15m K-line closes)."""
-    from datetime import datetime, timezone
+    """Send positions check card to Feishu when watchlist refresh completes."""
+    from datetime import datetime, timezone, timedelta
     from quant_trader.execution.notifier import FeishuNotifier, FeishuCardBuilder
     from quant_trader.execution.paper_ledger import get_all_positions
     from pathlib import Path
     import requests as sync_req
 
     FAPI_TICKER = "https://fapi.binance.com/fapi/v1/ticker/price"
-    PROXY = "http://192.168.1.1:7890"
+    PROXY = getattr(settings, "proxy", None)
     positions_path = Path("reports/paper/positions.jsonl")
 
     def _fetch_prices_sync():
@@ -312,7 +311,9 @@ async def _positions_report_loop(settings, stop_event, watchlist_event: asyncio.
                 profitable=profitable,
                 positions=positions_data,
             )
-            FeishuNotifier().send_card(card)
+            from quant_trader.execution.notifier import FeishuNotifier
+            fw = getattr(settings.notify, "feishu_webhook", None)
+            FeishuNotifier(webhook_url=fw).send_card(card)
             log.info("positions report sent (after kline close): %d open", len(open_pos))
         except Exception as e:
             log.warning("positions report failed: %s", e)
@@ -357,7 +358,7 @@ async def _rest_poll_loop(settings, kline_loop, sltp, stop_event):
 
     positions_path = Path("reports/paper/positions.jsonl")
     FAPI_TICKER = "https://fapi.binance.com/fapi/v1/ticker/price"
-    PROXY = "http://192.168.1.1:7890"
+    PROXY = getattr(settings, "proxy", None)
 
     async def _check_sltp() -> None:
         try:
@@ -405,7 +406,8 @@ async def main():
 
     # Feishu notifier for SL/TP close events
     from quant_trader.execution.notifier import FeishuNotifier, FeishuCardBuilder
-    feishu = FeishuNotifier()
+    feishu_webhook = getattr(settings.notify, "feishu_webhook", None)
+    feishu = FeishuNotifier(webhook_url=feishu_webhook)
 
     def _on_sltp_close(closed: dict):
         """Called by sltp.on_mark when a position is auto-closed."""
