@@ -344,14 +344,10 @@ def main():
     try:
         from quant_trader.execution.notifier import FeishuNotifier, FeishuCardBuilder
         feishu = FeishuNotifier()
-        gainer_str = ", ".join(g.symbol.replace("/USDT:USDT", "") for g in gainers[:5])
-        if len(gainers) > 5:
-            gainer_str += f" ... +{len(gainers)-5} more"
+        gainer_pairs = [(g.symbol.replace("/USDT:USDT", ""), float(g.pct_change_24h)) for g in gainers]
         daily_card = FeishuCardBuilder.make_daily_summary(
-            as_of=as_of,
-            gainer_str=gainer_str,
-            accepted=len(accepted),
-            blocked=len(blocked),
+            as_of=as_of, gainers=gainer_pairs,
+            accepted=len(accepted), blocked=len(blocked),
             open_pos=len(open_pos),
         )
         feishu.send_card(daily_card)

@@ -256,13 +256,10 @@ def run():
     if opened > 0 or blocked > 0:
         try:
             from quant_trader.execution.notifier import FeishuNotifier, FeishuCardBuilder
-            gainer_str = ", ".join(s.replace("/USDT:USDT", "") for s in current_gainers[:5])
             feishu = FeishuNotifier()
             card = FeishuCardBuilder.make_daily_summary(
-                as_of=today,
-                gainer_str=gainer_str,
-                accepted=opened,
-                blocked=blocked,
+                as_of=today, gainers=[],
+                accepted=opened, blocked=blocked,
                 open_pos=len(get_open_positions(positions_path)),
             )
             feishu.send_card(card)

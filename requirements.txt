@@ -9,4 +9,3 @@ scikit-learn>=1.0
 ta>=0.10
 flask>=2.0
 aiohttp>=3.8
-websockets>=12.0
