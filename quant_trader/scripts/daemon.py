@@ -154,21 +154,9 @@ async def _refresh_watchlist(ws, kline_loop: KlineStrategyLoop, sltp: SLTPWatch,
                         if bars_since > 2:
                             log.warning("跳过 %s: 信号滞后 %d 根K线(追高防护)", sym, bars_since)
                             continue
-                        # 实时价格：拉 ticker 开单，不用缓存 K 线收盘价
-                        api_sym = sym.split("/")[0].split(":")[0] + "USDT"
-                        ticker_price = None
-                        try:
-                            import requests as _req
-                            _r = _req.get(
-                                "https://fapi.binance.com/fapi/v1/ticker/price",
-                                params={"symbol": api_sym},
-                                timeout=5,
-                            )
-                            _r.raise_for_status()
-                            ticker_price = float(_r.json()["price"])
-                        except Exception as e:
-                            log.warning("实时价格拉取失败 %s: %s", api_sym, e)
-                        entry_price = ticker_price if ticker_price else float(df.iloc[-1]["close"])
+                        # 用最新已收盘 K 线收盘价开单，与回测一致
+                        # 实时 ticker 价格可能已偏离信号 K 线，造成追高
+                        entry_price = float(df.iloc[-1]["close"])
                         now_ts = datetime.now(timezone.utc).isoformat()
                         all_events = get_all_positions(positions_path)
                         allowed, reason = evaluate_risk(all_events, **risk_check)
