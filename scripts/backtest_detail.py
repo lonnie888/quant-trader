@@ -219,5 +219,5 @@ out = {
     },
     "per_symbol": {s: [t for sym_, t in passed if sym_ == s] for s in sorted_syms},
 }
-Path("reports/paper/backtest_v037.json").write_text(json.dumps(out, indent=2, ensure_ascii=False))
-print(f"\n✅ 详细数据保存到 reports/paper/backtest_v037.json")
+Path("reports/paper/backtest_detail.json").write_text(json.dumps(out, indent=2, ensure_ascii=False))
+print(f"\n✅ 详细数据保存到 reports/paper/backtest_detail.json")
