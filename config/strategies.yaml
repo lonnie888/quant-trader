@@ -12,7 +12,7 @@ strategies:
       pullback_max: [0.30]
       vol_shrink: [0.80]
       vol_recover: [1.0]
-      trigger_pct: [0.003]
+      trigger_pct: [0.0]
       ema_period: [12]
       hold_bars: [24]
       cooldown: [12]
