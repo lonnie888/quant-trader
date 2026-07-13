@@ -29,7 +29,7 @@ PARAMS = {
     "pump_window": 12, "pump_threshold": 0.13,
     "pullback_min": 0.05, "pullback_max": 0.30,
     "vol_shrink": 0.80, "vol_recover": 1.0,
-    "trigger_pct": 0.003, "ema_period": 12,
+    "trigger_pct": 0.0, "ema_period": 12,
     "hold_bars": 24, "cooldown": 12,
     "stop_loss_pct": 0.10, "take_profit_pct": 0.0,
     "side": "long_only",
