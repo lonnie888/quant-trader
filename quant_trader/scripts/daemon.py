@@ -106,7 +106,7 @@ async def _refresh_watchlist(ws, kline_loop: KlineStrategyLoop, sltp: SLTPWatch,
                 now = datetime.now(timezone.utc)
                 api_sym = sym.split("/")[0].split(":")[0] + "USDT"
                 try:
-                    start_ms = int((now - datetime.timedelta(days=7)).timestamp() * 1000)
+                    start_ms = int((now - timedelta(days=7)).timestamp() * 1000)
                     end_ms = int(now.timestamp() * 1000)
                     url = f"{FAPI_KLINE}?symbol={api_sym}&interval=15m&startTime={start_ms}&endTime={end_ms}&limit=1000"
                     import requests as _rq

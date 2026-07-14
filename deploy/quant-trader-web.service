@@ -1,0 +1,18 @@
+[Unit]
+Description=Quant Trader Web Dashboard
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=lonnie
+WorkingDirectory=/vol1/1000/quant_trader
+ExecStart=/vol1/1000/quant_trader/.venv/bin/python3 web/app.py
+Restart=always
+RestartSec=10
+StandardOutput=append:/vol1/1000/quant_trader/reports/logs/web.log
+StandardError=append:/vol1/1000/quant_trader/reports/logs/web.err
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

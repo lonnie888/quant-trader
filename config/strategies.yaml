@@ -17,5 +17,5 @@ strategies:
       hold_bars: [24]
       cooldown: [12]
       stop_loss_pct: [0.10]
-      take_profit_pct: [0.0]
+      take_profit_pct: [0.30]
       side: ["long_only"]
