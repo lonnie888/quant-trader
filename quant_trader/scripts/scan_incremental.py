@@ -33,8 +33,8 @@ TOP_N = 10
 EXCLUDE = {"BUSDUSDT", "BTCDOMUSDT", "USDCUSDT"}
 
 
-def fetch_top_gainers(top_n: int = TOP_N) -> list[str]:
-    """返回涨幅前N的币种列表 (ccxt格式: XXX/USDT:USDT)。"""
+def fetch_top_gainers(top_n: int = TOP_N) -> list[tuple[str, float]]:
+    """返回涨幅前N的币种列表 (ccxt格式: XXX/USDT:USDT, 24h涨幅%)。"""
     r = requests.get(FAPI_TICKER, timeout=15)
     r.raise_for_status()
     all_tickers = r.json()
@@ -51,7 +51,7 @@ def fetch_top_gainers(top_n: int = TOP_N) -> list[str]:
         ccxt_sym = f"{base}/USDT:USDT"
         candidates.append((ccxt_sym, float(pct)))
     candidates.sort(key=lambda x: -x[1])
-    return [c[0] for c in candidates[:top_n]]
+    return candidates[:top_n]
 
 
 def fetch_klines(api_sym: str, days: int = LOOKBACK_DAYS) -> list[list]:
@@ -93,10 +93,10 @@ def run():
     except Exception as e:
         log.warning("涨幅榜拉取失败: %s", e)
         return
-    log.info("当前涨幅榜: %s", [s.replace("/USDT:USDT", "") for s in current_gainers])
+    log.info("当前涨幅榜: %s", [s.replace("/USDT:USDT", "") for s, _ in current_gainers])
 
     # 3. 找出新币
-    new_symbols = [s for s in current_gainers if s not in last_gainers]
+    new_symbols = [s for s, _ in current_gainers if s not in last_gainers]
     if not new_symbols:
         log.info("无新币，但继续对所有涨幅榜币跑策略")
     else:
@@ -175,7 +175,7 @@ def run():
     except Exception as e:
         log.warning("批量价格拉取失败，回退逐币查询: %s", e)
 
-    for sym in current_gainers:
+    for sym, _ in current_gainers:
         if sym in cooldown_symbols:
             log.info("跳过: %s 在冷却期内（刚timeout退出）", sym)
             continue
@@ -248,15 +248,15 @@ def run():
                     opened += 1
                     log.info("✅ 开单 %s @ %.6f id=%d", sym, entry_price, ev.id)
 
-    # 5. 更新缓存
-    CACHE_FILE.write_text(json.dumps(current_gainers))
+    # 5. 更新缓存（只存 symbol，不存百分比）
+    CACHE_FILE.write_text(json.dumps([s for s, _ in current_gainers]))
     log.info("增量扫描完成，本次开单: %d", opened)
 
     # 飞书通知
     if opened > 0 or blocked > 0:
         try:
             from quant_trader.execution.notifier import FeishuNotifier, FeishuCardBuilder
-            gainer_pairs = [(s.replace("/USDT:USDT", "") if "/USDT:USDT" in s else s, 0.0) for s in current_gainers[:30]]
+            gainer_pairs = [(s.replace("/USDT:USDT", ""), pct) for s, pct in current_gainers[:30]]
             feishu = FeishuNotifier()
             card = FeishuCardBuilder.make_daily_summary(
                 as_of=today, gainers=gainer_pairs,

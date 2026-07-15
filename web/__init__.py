@@ -12,9 +12,12 @@ def create_app() -> Flask:
                 static_url_path="/static")
     app.config["TEMPLATES_AUTO_RELOAD"] = True
 
-    # Auth
-    app.secret_key = os.urandom(32).hex()
-    WEB_PASSWORD = os.environ.get("QT_PASSWORD", "quant888")
+    # Auth — 从 settings.yaml 读密码，默认不允许
+    from quant_trader.config import load_settings
+    _s = load_settings()
+    WEB_PASSWORD = os.environ.get("QT_PASSWORD") or getattr(_s.web, "password", None) or "quant888"
+    _secret = getattr(_s.web, "secret_key", None)
+    app.secret_key = _secret if _secret else os.urandom(32).hex()
 
     def login_required(f):
         @wraps(f)

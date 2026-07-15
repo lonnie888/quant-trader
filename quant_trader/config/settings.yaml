@@ -42,12 +42,13 @@ risk:
   max_position_pct: 0.10    # single position
   max_total_exposure: 0.30
   max_concurrent: 3          # hard cap on simultaneous open positions
-  daily_loss_limit: 0.05
+  daily_loss_limit: 0.30
   stop_loss_pct: 0.10        # default SL (overridden by strategy params)
   take_profit_pct: 0.0       # default TP (overridden by strategy params)
 
 notify:
   enabled: false
+  feishu_webhook: ""
   telegram:
     bot_token: ""
     chat_id: ""
