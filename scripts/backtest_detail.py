@@ -31,7 +31,7 @@ PARAMS = {
     "vol_shrink": 0.80, "vol_recover": 1.0,
     "trigger_pct": 0.0, "ema_period": 12,
     "hold_bars": 24, "cooldown": 12,
-    "stop_loss_pct": 0.10, "take_profit_pct": 1.0,
+    "stop_loss_pct": 0.10, "take_profit_pct": 0.30,
     "side": "long_only",
 }
 
@@ -169,7 +169,7 @@ profit_factor = abs(pnls_a[pnls_a > 0].sum() / pnls_a[pnls_a < 0].sum()) if (pnl
 
 print(f"{'='*50} v0.3.10 综合统计 (含风控+TP) {'='*50}")
 print(f"  trigger_pct:               0.0")
-print(f"  take_profit_pct:           1.0 (100%止盈)")
+print(f"  take_profit_pct:           0.30 (30%止盈)")
 print(f"  daily_loss_limit:          0.30")
 print(f"")
 print(f"  总交易数:                  {len(pnls_a)}")
