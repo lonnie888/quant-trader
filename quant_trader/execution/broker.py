@@ -1,33 +1,18 @@
-"""Broker interface — paper (JSONL) vs demo trading (Binance demo API).
-
-Usage:
-  from quant_trader.execution.broker import create_broker
-  broker = create_broker(settings)
-  broker.enter(symbol=sym, entry_price=price, ...)
-"""
+"""Broker interface — paper (JSONL) vs demo trading (Binance demo API)."""
 from __future__ import annotations
 
-import json
 import logging
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
 from quant_trader.execution.paper_ledger import open_position as _paper_open
-from quant_trader.execution.paper_ledger import get_all_positions, get_open_positions, close_position
+from quant_trader.execution.paper_ledger import get_open_positions, close_position
 
 log = logging.getLogger(__name__)
 
-LEVERAGE = 3
-
 
 class BaseBroker:
-    """Abstract broker interface."""
-
-    def enter(self, *, symbol: str, strategy: str, params: dict,
-              entry_ts: str, entry_price: float, leverage: float,
-              open_day: Optional[str] = None, log_path: Path,
-              risk_check: Optional[dict] = None):
+    def enter(self, **kwargs):
         raise NotImplementedError
 
     def exit(self, *, position_id: int, exit_ts: str,
@@ -39,8 +24,6 @@ class BaseBroker:
 
 
 class PaperBroker(BaseBroker):
-    """Existing JSONL-based paper trading broker."""
-
     def enter(self, **kwargs):
         return _paper_open(**kwargs)
 
@@ -54,11 +37,7 @@ class PaperBroker(BaseBroker):
 
 
 class DemoBroker(BaseBroker):
-    """Binance USDⓈ-M Futures demo trading broker (demo-fapi.binance.com).
-    
-    Uses ccxt binance with enable_demo_trading().
-    Falls back to paper ledger for positions missing on exchange.
-    """
+    """Binance USDⓈ-M Futures demo trading broker (demo-fapi.binance.com)."""
 
     def __init__(self, settings, proxy: Optional[str] = None):
         import ccxt
@@ -75,7 +54,6 @@ class DemoBroker(BaseBroker):
         self.leverage = int(getattr(settings.backtest, "leverage", 3))
 
     def _set_leverage(self, symbol_ccxt: str):
-        """Set leverage on first use per symbol."""
         try:
             self.exchange.set_leverage(self.leverage, symbol_ccxt)
         except Exception as e:
@@ -85,26 +63,38 @@ class DemoBroker(BaseBroker):
               entry_ts: str, entry_price: float, leverage: float,
               open_day: Optional[str] = None, log_path: Path,
               risk_check: Optional[dict] = None):
-        # 1. Open on exchange via market order
         sym_ccxt = symbol.split("/")[0].split(":")[0] + "/USDT"
         api_sym = symbol.split("/")[0].split(":")[0] + "USDT"
-        # Calculate quantity from risk_check (max_position_pct of capital)
+
+        # Calculate quantity
         capital = float(risk_check.get("initial_capital", 10000)) if risk_check else 10000
         pos_pct = float(risk_check.get("max_position_pct", 0.10)) if risk_check else 0.10
-        notional = capital * pos_pct * leverage
-        raw_qty = notional / entry_price
+        raw_qty = capital * pos_pct * leverage / entry_price
+
         try:
             qty = float(self.exchange.amount_to_precision(sym_ccxt, raw_qty))
         except Exception:
-            qty = max(round(raw_qty), 1)  # fallback: integer
+            qty = max(round(raw_qty), 1)
+
+        # Clamp to available balance
+        try:
+            bal = self.exchange.fetch_balance()
+            free = float(bal.get("USDT", {}).get("free", 0))
+            max_q = max(1, int(free * self.leverage / entry_price))
+            qty = min(qty, max_q)
+        except Exception:
+            pass
+        qty = max(qty, 1)  # minimum 1 contract
 
         try:
             self._set_leverage(sym_ccxt)
-            order = self.exchange.create_market_buy_order(sym_ccxt, qty)
-            log.info("demo order filled: %s qty=%s price=%s", api_sym, qty,
-                     order.get("price", "?"))
-            # Use fill price from exchange
+            order = self.exchange.create_market_buy_order(
+                sym_ccxt, qty,
+                params={"positionSide": "LONG"},
+            )
             actual_price = float(order.get("price", entry_price))
+            log.info("demo order filled %s qty=%s price=%s id=%s",
+                     api_sym, qty, actual_price, order.get("id", "?"))
         except Exception as e:
             log.warning("demo order failed %s: %s, falling back to paper", api_sym, e)
             return self._paper.enter(
@@ -114,7 +104,6 @@ class DemoBroker(BaseBroker):
                 log_path=log_path, risk_check=risk_check,
             )
 
-        # 2. Record in paper ledger for unified tracking
         ev = self._paper.enter(
             symbol=symbol, strategy=strategy, params=params,
             entry_ts=entry_ts, entry_price=actual_price,
@@ -125,9 +114,6 @@ class DemoBroker(BaseBroker):
 
     def exit(self, *, position_id: int, exit_ts: str,
              exit_price: float, exit_reason: str, log_path: Path):
-        # 1. Close on exchange
-        # TODO: read the position's symbol from paper ledger, then market sell
-        # 2. Record in paper ledger
         return self._paper.exit(
             position_id=position_id, exit_ts=exit_ts,
             exit_price=exit_price, exit_reason=exit_reason,
@@ -139,7 +125,6 @@ class DemoBroker(BaseBroker):
 
 def create_broker(settings, mode: str = "paper",
                   proxy: Optional[str] = None) -> BaseBroker:
-    """Factory. mode='paper' or mode='demo'."""
     if mode == "demo":
         return DemoBroker(settings, proxy=proxy)
     return PaperBroker()
