@@ -433,11 +433,14 @@ async def main():
         except NotImplementedError:
             pass
 
-    # Create broker (paper or demo)
-    broker_mode = getattr(settings.demo_trading, "mode", "paper")
+    # Create brokers (paper + demo dual-run)
     proxy = getattr(settings, "proxy", None)
-    broker = create_broker(settings, mode=broker_mode, proxy=proxy)
-    log.info("broker mode: %s", broker_mode)
+    broker_paper = create_broker(settings, mode="paper")
+    broker_demo = create_broker(settings, mode="demo", proxy=proxy)
+    broker_mode = getattr(settings.demo_trading, "mode", "paper")
+    log.info("broker mode: %s (paper+demo dual-run)", broker_mode)
+    # Use paper broker for risk checks, demo for actual orders
+    broker = broker_demo
 
     # Start REST polling and watchlist immediately (don't wait for WS)
     # Event to signal positions_report task that a watchlist refresh completed
