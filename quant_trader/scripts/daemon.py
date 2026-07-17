@@ -110,7 +110,7 @@ async def _refresh_watchlist(broker, settings, top_n: int = 30,
                     end_ms = int(now.timestamp() * 1000)
                     url = f"{FAPI_KLINE}?symbol={api_sym}&interval=15m&startTime={start_ms}&endTime={end_ms}&limit=1000"
                     import requests as _rq
-                    r = _rq.get(url, timeout=15)
+                    r = _rq.get(url, timeout=30)
                     r.raise_for_status()
                     raw = r.json()
                     if raw:

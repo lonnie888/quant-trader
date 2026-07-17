@@ -88,7 +88,15 @@ class DemoBroker(BaseBroker):
         # 1. Open on exchange via market order
         sym_ccxt = symbol.split("/")[0].split(":")[0] + "/USDT"
         api_sym = symbol.split("/")[0].split(":")[0] + "USDT"
-        qty = 0.001  # minimal for test. In production, compute from risk_check.
+        # Calculate quantity from risk_check (max_position_pct of capital)
+        capital = float(risk_check.get("initial_capital", 10000)) if risk_check else 10000
+        pos_pct = float(risk_check.get("max_position_pct", 0.10)) if risk_check else 0.10
+        notional = capital * pos_pct * leverage
+        raw_qty = notional / entry_price
+        try:
+            qty = float(self.exchange.amount_to_precision(sym_ccxt, raw_qty))
+        except Exception:
+            qty = max(round(raw_qty), 1)  # fallback: integer
 
         try:
             self._set_leverage(sym_ccxt)
