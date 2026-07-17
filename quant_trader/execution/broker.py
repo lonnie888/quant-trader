@@ -76,7 +76,9 @@ class DemoBroker(BaseBroker):
         except Exception:
             qty = max(round(raw_qty), 1)
 
-        # Clamp to available balance
+        # Clamp to available balance and min notional (5 USDT)
+        min_qty = max(1, int(5.0 / entry_price))  # minimum notional = 5 USDT
+        qty = max(qty, min_qty)
         try:
             bal = self.exchange.fetch_balance()
             free = float(bal.get("USDT", {}).get("free", 0))
@@ -84,7 +86,7 @@ class DemoBroker(BaseBroker):
             qty = min(qty, max_q)
         except Exception:
             pass
-        qty = max(qty, 1)  # minimum 1 contract
+        qty = max(qty, min_qty)  # re-apply min after balance clamp
 
         try:
             self._set_leverage(sym_ccxt)
