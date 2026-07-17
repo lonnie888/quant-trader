@@ -22,6 +22,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 from quant_trader.config import load_settings  # noqa: E402
+from quant_trader.execution.broker import create_broker  # noqa: E402
 from quant_trader.data.realtime.ws_client import FapiWS, stream_kline  # noqa: E402
 from quant_trader.data.realtime.kline_strategy import KlineStrategyLoop  # noqa: E402
 from quant_trader.data.realtime.sltp_watch import SLTPWatch  # noqa: E402
@@ -40,8 +41,7 @@ log = logging.getLogger("daemon")
 DEFAULT_WATCHLIST: list[str] = []
 
 
-async def _refresh_watchlist(ws, kline_loop: KlineStrategyLoop, sltp: SLTPWatch,
-                             settings, top_n: int = 30,
+async def _refresh_watchlist(broker, settings, top_n: int = 30,
                              refresh_event: asyncio.Event | None = None):
     """Periodic task: refresh watchlist from gainers scanner and run strategy."""
     while True:
@@ -162,7 +162,7 @@ async def _refresh_watchlist(ws, kline_loop: KlineStrategyLoop, sltp: SLTPWatch,
                         allowed, reason = evaluate_risk(all_events, **risk_check)
                         if not allowed:
                             blocked += 1
-                            open_position(
+                            broker.enter(
                                 symbol=sym, strategy=name, params=params,
                                 entry_ts=now_ts, entry_price=entry_price,
                                 leverage=float(settings.backtest.leverage),
@@ -170,7 +170,7 @@ async def _refresh_watchlist(ws, kline_loop: KlineStrategyLoop, sltp: SLTPWatch,
                                 risk_check=risk_check,
                             )
                             continue
-                        ev = open_position(
+                        ev = broker.enter(
                             symbol=sym, strategy=name, params=params,
                             entry_ts=now_ts, entry_price=entry_price,
                             leverage=float(settings.backtest.leverage),
@@ -433,6 +433,12 @@ async def main():
         except NotImplementedError:
             pass
 
+    # Create broker (paper or demo)
+    broker_mode = getattr(settings.demo_trading, "mode", "paper")
+    proxy = getattr(settings, "proxy", None)
+    broker = create_broker(settings, mode=broker_mode, proxy=proxy)
+    log.info("broker mode: %s", broker_mode)
+
     # Start REST polling and watchlist immediately (don't wait for WS)
     # Event to signal positions_report task that a watchlist refresh completed
     refresh_event = asyncio.Event()
@@ -440,7 +446,7 @@ async def main():
     tasks = [
         asyncio.create_task(_rest_poll_loop(settings, kline_loop, sltp, stop_event), name="rest_poll"),
         asyncio.create_task(
-            _refresh_watchlist(ws, kline_loop, sltp, settings, refresh_event=refresh_event),
+            _refresh_watchlist(broker, settings, refresh_event=refresh_event),
             name="watchlist",
         ),
         asyncio.create_task(_daily_recap_loop(stop_event), name="daily_recap"),
