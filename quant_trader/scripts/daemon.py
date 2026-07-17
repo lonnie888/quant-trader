@@ -154,6 +154,17 @@ async def _refresh_watchlist(broker, settings, top_n: int = 30,
                         if bars_since > 2:
                             log.warning("跳过 %s: 信号滞后 %d 根K线(追高防护)", sym, bars_since)
                             continue
+                        # 额外检查：最近12根K线内必须有 ≥13% 的泵
+                        # 防止"持仓延续"信号在下跌趋势中误开仓
+                        pump_window = 12
+                        pump_threshold = 0.13
+                        if len(df) >= pump_window:
+                            win_high = df["high"].iloc[-pump_window:].max()
+                            win_low = df["low"].iloc[-pump_window:].min()
+                            pump_pct = win_high / win_low - 1 if win_low > 0 else 0
+                            if pump_pct < pump_threshold:
+                                log.warning("跳过 %s: 最近12根K线无泵(涨幅%.1f%%<13%%)", sym, pump_pct * 100)
+                                continue
                         # 用最新已收盘 K 线收盘价开单，与回测一致
                         # 实时 ticker 价格可能已偏离信号 K 线，造成追高
                         entry_price = float(df.iloc[-1]["close"])
