@@ -405,6 +405,14 @@ async def main():
     def _on_sltp_close(closed: dict):
         """Called by sltp.on_mark when a position is auto-closed."""
         try:
+            # Close demo position too
+            broker.exit(
+                position_id=int(closed.get("id", 0)),
+                exit_ts=closed.get("exit_ts", datetime.now(timezone.utc).isoformat()),
+                exit_price=float(closed.get("exit_price", 0)),
+                exit_reason=closed.get("exit_reason", ""),
+                log_path=Path("reports/paper/positions.jsonl"),
+            )
             ev = closed
             entry = float(ev.get("entry_price", 0))
             exit_ = float(ev.get("exit_price", 0))

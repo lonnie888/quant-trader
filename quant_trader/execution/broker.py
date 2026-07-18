@@ -94,7 +94,13 @@ class DemoBroker(BaseBroker):
                 sym_ccxt, qty,
                 params={"positionSide": "LONG"},
             )
-            actual_price = float(order.get("price", entry_price))
+            # Binance market order may not return price directly
+            filled = float(order.get("filled", 0))
+            cost = float(order.get("cost", 0))
+            if cost > 0 and filled > 0:
+                actual_price = cost / filled
+            else:
+                actual_price = float(order.get("price", entry_price) or entry_price)
             log.info("demo order filled %s qty=%s price=%s id=%s",
                      api_sym, qty, actual_price, order.get("id", "?"))
         except Exception as e:
@@ -116,6 +122,23 @@ class DemoBroker(BaseBroker):
 
     def exit(self, *, position_id: int, exit_ts: str,
              exit_price: float, exit_reason: str, log_path: Path):
+        # Close on demo exchange first
+        from quant_trader.execution.paper_ledger import get_all_positions
+        events = get_all_positions(log_path)
+        for e in events:
+            if e.get("id") == position_id and e.get("status") == "open":
+                sym = e["symbol"]
+                sym_ccxt = sym.split("/")[0].split(":")[0] + "/USDT"
+                api_sym = sym.split("/")[0].split(":")[0] + "USDT"
+                try:
+                    self.exchange.create_market_sell_order(
+                        sym_ccxt, 1,  # minimal qty, just to close
+                        params={"positionSide": "LONG", "reduceOnly": True},
+                    )
+                    log.info("demo order closed %s id=%s", api_sym, position_id)
+                except Exception as e:
+                    log.warning("demo close failed %s: %s", api_sym, e)
+                break
         return self._paper.exit(
             position_id=position_id, exit_ts=exit_ts,
             exit_price=exit_price, exit_reason=exit_reason,
