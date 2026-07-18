@@ -10,6 +10,8 @@ from quant_trader.execution.paper_ledger import get_open_positions, close_positi
 
 log = logging.getLogger(__name__)
 
+FIXED_MARGIN = 1000.0  # USDT per position
+
 
 class BaseBroker:
     def enter(self, **kwargs):
@@ -66,19 +68,19 @@ class DemoBroker(BaseBroker):
         sym_ccxt = symbol.split("/")[0].split(":")[0] + "/USDT"
         api_sym = symbol.split("/")[0].split(":")[0] + "USDT"
 
-        # Calculate quantity
-        capital = float(risk_check.get("initial_capital", 10000)) if risk_check else 10000
-        pos_pct = float(risk_check.get("max_position_pct", 0.10)) if risk_check else 0.10
-        raw_qty = capital * pos_pct * leverage / entry_price
+        # Fixed 1000 USDT margin per position
+        raw_qty = FIXED_MARGIN * self.leverage / entry_price
 
         try:
             qty = float(self.exchange.amount_to_precision(sym_ccxt, raw_qty))
         except Exception:
             qty = max(round(raw_qty), 1)
 
-        # Clamp to available balance and min notional (5 USDT)
-        min_qty = max(1, int(5.0 / entry_price))  # minimum notional = 5 USDT
+        # Minimum notional = 5 USDT
+        min_qty = max(1, int(5.0 / entry_price))
         qty = max(qty, min_qty)
+
+        # Clamp to available balance
         try:
             bal = self.exchange.fetch_balance()
             free = float(bal.get("USDT", {}).get("free", 0))
@@ -86,7 +88,7 @@ class DemoBroker(BaseBroker):
             qty = min(qty, max_q)
         except Exception:
             pass
-        qty = max(qty, min_qty)  # re-apply min after balance clamp
+        qty = max(qty, min_qty)
 
         try:
             self._set_leverage(sym_ccxt)
@@ -94,7 +96,6 @@ class DemoBroker(BaseBroker):
                 sym_ccxt, qty,
                 params={"positionSide": "LONG"},
             )
-            # Binance market order may not return price directly
             filled = float(order.get("filled", 0))
             cost = float(order.get("cost", 0))
             if cost > 0 and filled > 0:
@@ -122,7 +123,6 @@ class DemoBroker(BaseBroker):
 
     def exit(self, *, position_id: int, exit_ts: str,
              exit_price: float, exit_reason: str, log_path: Path):
-        # Close on demo exchange first
         from quant_trader.execution.paper_ledger import get_all_positions
         events = get_all_positions(log_path)
         for e in events:
@@ -132,7 +132,7 @@ class DemoBroker(BaseBroker):
                 api_sym = sym.split("/")[0].split(":")[0] + "USDT"
                 try:
                     self.exchange.create_market_sell_order(
-                        sym_ccxt, 1,  # minimal qty, just to close
+                        sym_ccxt, 1,
                         params={"positionSide": "LONG", "reduceOnly": True},
                     )
                     log.info("demo order closed %s id=%s", api_sym, position_id)
