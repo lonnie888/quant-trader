@@ -10,17 +10,15 @@ from quant_trader.execution.paper_ledger import get_open_positions, close_positi
 
 log = logging.getLogger(__name__)
 
-FIXED_MARGIN = 1000.0  # USDT per position
+FIXED_MARGIN = 1000.0
 
 
 class BaseBroker:
     def enter(self, **kwargs):
         raise NotImplementedError
-
     def exit(self, *, position_id: int, exit_ts: str,
              exit_price: float, exit_reason: str, log_path: Path):
         raise NotImplementedError
-
     def get_positions(self) -> list[dict]:
         raise NotImplementedError
 
@@ -28,19 +26,15 @@ class BaseBroker:
 class PaperBroker(BaseBroker):
     def enter(self, **kwargs):
         return _paper_open(**kwargs)
-
     def exit(self, *, position_id: int, exit_ts: str,
              exit_price: float, exit_reason: str, log_path: Path):
         return close_position(position_id, exit_ts=exit_ts,
                               exit_price=exit_price, exit_reason=exit_reason)
-
     def get_positions(self) -> list[dict]:
         return get_open_positions()
 
 
 class DemoBroker(BaseBroker):
-    """Binance USDⓈ-M Futures demo trading broker (demo-fapi.binance.com)."""
-
     def __init__(self, settings, proxy: Optional[str] = None):
         import ccxt
         cfg = settings.demo_trading
@@ -54,12 +48,28 @@ class DemoBroker(BaseBroker):
             self.exchange.proxies = {"http": proxy, "https": proxy}
         self._paper = PaperBroker()
         self.leverage = int(getattr(settings.backtest, "leverage", 3))
+        self._futures_set: set[str] = set()
 
-    def _set_leverage(self, symbol_ccxt: str):
+    def _ensure_markets(self):
+        if not self._futures_set:
+            try:
+                self.exchange.load_markets()
+                self._futures_set = {
+                    s for s, m in self.exchange.markets.items()
+                    if m.get("future") or m.get("linear")
+                }
+            except Exception:
+                pass
+
+    def _has_market(self, sym: str) -> bool:
+        self._ensure_markets()
+        return sym in self._futures_set
+
+    def _set_leverage(self, symbol: str):
         try:
-            self.exchange.set_leverage(self.leverage, symbol_ccxt)
-        except Exception as e:
-            log.debug("set_leverage %s: %s", symbol_ccxt, e)
+            self.exchange.set_leverage(self.leverage, symbol)
+        except Exception:
+            pass
 
     def enter(self, *, symbol: str, strategy: str, params: dict,
               entry_ts: str, entry_price: float, leverage: float,
@@ -68,19 +78,24 @@ class DemoBroker(BaseBroker):
         sym_ccxt = symbol.split("/")[0].split(":")[0] + "/USDT"
         api_sym = symbol.split("/")[0].split(":")[0] + "USDT"
 
-        # Fixed 1000 USDT margin per position
-        raw_qty = FIXED_MARGIN * self.leverage / entry_price
+        if not self._has_market(sym_ccxt):
+            log.warning("跳过 %s: 合约市场不支持此币种", api_sym)
+            return self._paper.enter(
+                symbol=symbol, strategy=strategy, params=params,
+                entry_ts=entry_ts, entry_price=entry_price,
+                leverage=leverage, open_day=open_day,
+                log_path=log_path, risk_check=risk_check,
+            )
 
+        raw_qty = FIXED_MARGIN * self.leverage / entry_price
         try:
             qty = float(self.exchange.amount_to_precision(sym_ccxt, raw_qty))
         except Exception:
             qty = max(round(raw_qty), 1)
 
-        # Minimum notional = 5 USDT
         min_qty = max(1, int(5.0 / entry_price))
         qty = max(qty, min_qty)
 
-        # Clamp to available balance
         try:
             bal = self.exchange.fetch_balance()
             free = float(bal.get("USDT", {}).get("free", 0))
@@ -93,8 +108,7 @@ class DemoBroker(BaseBroker):
         try:
             self._set_leverage(sym_ccxt)
             order = self.exchange.create_market_buy_order(
-                sym_ccxt, qty,
-                params={"positionSide": "LONG"},
+                sym_ccxt, qty, params={"positionSide": "LONG"},
             )
             filled = float(order.get("filled", 0))
             cost = float(order.get("cost", 0))
@@ -130,14 +144,15 @@ class DemoBroker(BaseBroker):
                 sym = e["symbol"]
                 sym_ccxt = sym.split("/")[0].split(":")[0] + "/USDT"
                 api_sym = sym.split("/")[0].split(":")[0] + "USDT"
-                try:
-                    self.exchange.create_market_sell_order(
-                        sym_ccxt, 1,
-                        params={"positionSide": "LONG", "reduceOnly": True},
-                    )
-                    log.info("demo order closed %s id=%s", api_sym, position_id)
-                except Exception as e:
-                    log.warning("demo close failed %s: %s", api_sym, e)
+                if self._has_market(sym_ccxt):
+                    try:
+                        self.exchange.create_market_sell_order(
+                            sym_ccxt, 1,
+                            params={"positionSide": "LONG", "reduceOnly": True},
+                        )
+                        log.info("demo order closed %s id=%s", api_sym, position_id)
+                    except Exception as e:
+                        log.warning("demo close failed %s: %s", api_sym, e)
                 break
         return self._paper.exit(
             position_id=position_id, exit_ts=exit_ts,
