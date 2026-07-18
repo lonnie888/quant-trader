@@ -85,14 +85,19 @@ class DemoBroker(BaseBroker):
             order = self.exchange.create_market_buy_order(
                 sym_ccxt, qty, params={"positionSide": "LONG"},
             )
-            filled = float(order.get("filled", 0))
-            cost = float(order.get("cost", 0))
+            order_id = order.get("id")
+            # Fetch order to get actual fill price (async fill)
+            import time
+            time.sleep(0.5)
+            filled_order = self.exchange.fetch_order(order_id, sym_ccxt)
+            filled = float(filled_order.get("filled", 0) or 0)
+            cost = float(filled_order.get("cost", 0) or 0)
             if cost > 0 and filled > 0:
                 actual_price = cost / filled
             else:
-                actual_price = float(order.get("price", entry_price) or entry_price)
+                actual_price = float(filled_order.get("price", entry_price) or entry_price)
             log.info("demo order filled %s qty=%s price=%s id=%s",
-                     api_sym, qty, actual_price, order.get("id", "?"))
+                     api_sym, qty, actual_price, order_id)
             # Place SL/TP orders on exchange
             sl_price = actual_price * (1 - 0.10)  # 10% SL
             tp_price = actual_price * (1 + 0.30)  # 30% TP
