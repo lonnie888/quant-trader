@@ -113,8 +113,8 @@ class DemoBroker(BaseBroker):
             try:
                 self.exchange.create_order(
                     sym_ccxt, "TAKE_PROFIT_MARKET", "sell", qty, None,
-                    params={"stopPrice": self.exchange.price_to_precision(sym_ccxt, tp_price),
-                            "positionSide": "LONG", "reduceOnly": True},
+                    params={"stopPrice": str(self.exchange.price_to_precision(sym_ccxt, tp_price)),
+                            "positionSide": "LONG", "reduceOnly": False},
                 )
                 log.info("demo TP set %s @ %.6f", api_sym, tp_price)
             except Exception as e:
