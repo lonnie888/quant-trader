@@ -118,6 +118,27 @@ class DemoBroker(BaseBroker):
                 actual_price = float(order.get("price", entry_price) or entry_price)
             log.info("demo order filled %s qty=%s price=%s id=%s",
                      api_sym, qty, actual_price, order.get("id", "?"))
+            # Place SL/TP orders on exchange
+            sl_price = actual_price * (1 - 0.10)  # 10% SL
+            tp_price = actual_price * (1 + 0.30)  # 30% TP
+            try:
+                self.exchange.create_order(
+                    sym_ccxt, "STOP_MARKET", "sell", qty, None,
+                    params={"stopPrice": self.exchange.price_to_precision(sym_ccxt, sl_price),
+                            "positionSide": "LONG", "reduceOnly": True},
+                )
+                log.info("demo SL set %s @ %.6f", api_sym, sl_price)
+            except Exception as e:
+                log.warning("demo SL failed %s: %s", api_sym, e)
+            try:
+                self.exchange.create_order(
+                    sym_ccxt, "TAKE_PROFIT_MARKET", "sell", qty, None,
+                    params={"stopPrice": self.exchange.price_to_precision(sym_ccxt, tp_price),
+                            "positionSide": "LONG", "reduceOnly": True},
+                )
+                log.info("demo TP set %s @ %.6f", api_sym, tp_price)
+            except Exception as e:
+                log.warning("demo TP failed %s: %s", api_sym, e)
         except Exception as e:
             log.warning("demo order failed %s: %s, falling back to paper", api_sym, e)
             return self._paper.enter(
