@@ -277,6 +277,9 @@ async def _positions_report_loop(settings, stop_event, watchlist_event: asyncio.
                 if entry_ts:
                     try:
                         ed = datetime.fromisoformat(entry_ts.replace("Z", "+00:00"))
+                        # 兼容无时区的时间戳
+                        if ed.tzinfo is None:
+                            ed = ed.replace(tzinfo=timezone.utc)
                         now = datetime.now(timezone.utc)
                         elapsed_bars = int((now - ed).total_seconds() / (15 * 60))
                         remaining_bars = max(0, remaining_bars - elapsed_bars)
