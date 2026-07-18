@@ -48,22 +48,6 @@ class DemoBroker(BaseBroker):
             self.exchange.proxies = {"http": proxy, "https": proxy}
         self._paper = PaperBroker()
         self.leverage = int(getattr(settings.backtest, "leverage", 3))
-        self._futures_set: set[str] = set()
-
-    def _ensure_markets(self):
-        if not self._futures_set:
-            try:
-                self.exchange.load_markets()
-                self._futures_set = {
-                    s for s, m in self.exchange.markets.items()
-                    if m.get("future") or m.get("linear")
-                }
-            except Exception:
-                pass
-
-    def _has_market(self, sym: str) -> bool:
-        self._ensure_markets()
-        return sym in self._futures_set
 
     def _set_leverage(self, symbol: str):
         try:
@@ -77,15 +61,6 @@ class DemoBroker(BaseBroker):
               risk_check: Optional[dict] = None):
         sym_ccxt = symbol.split("/")[0].split(":")[0] + "/USDT"
         api_sym = symbol.split("/")[0].split(":")[0] + "USDT"
-
-        if not self._has_market(sym_ccxt):
-            log.warning("跳过 %s: 合约市场不支持此币种", api_sym)
-            return self._paper.enter(
-                symbol=symbol, strategy=strategy, params=params,
-                entry_ts=entry_ts, entry_price=entry_price,
-                leverage=leverage, open_day=open_day,
-                log_path=log_path, risk_check=risk_check,
-            )
 
         raw_qty = FIXED_MARGIN * self.leverage / entry_price
         try:
@@ -125,7 +100,7 @@ class DemoBroker(BaseBroker):
                 self.exchange.create_order(
                     sym_ccxt, "STOP_MARKET", "sell", qty, None,
                     params={"stopPrice": self.exchange.price_to_precision(sym_ccxt, sl_price),
-                            "positionSide": "LONG", "reduceOnly": True},
+                            "positionSide": "LONG"},
                 )
                 log.info("demo SL set %s @ %.6f", api_sym, sl_price)
             except Exception as e:
