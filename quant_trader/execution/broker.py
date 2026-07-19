@@ -75,8 +75,8 @@ class DemoBroker(BaseBroker):
     def _post(self, path: str, params: dict) -> dict:
         return _sign_and_send("POST", path, self.api_key, self.secret, params, self.proxy)
 
-    def _get(self, path: str, params: dict) -> dict:
-        return _sign_and_send("GET", path, self.api_key, self.secret, params, self.proxy)
+    def _get(self, path: str, params: dict, base_url: str = FAPI_BASE) -> dict:
+        return _sign_and_send("GET", path, self.api_key, self.secret, params, self.proxy, base_url)
 
     def enter(self, *, symbol: str, strategy: str, params: dict,
               entry_ts: str, entry_price: float, leverage: float,
@@ -88,7 +88,7 @@ class DemoBroker(BaseBroker):
             # Get available balance
             acct = self._get("account", {}, base_url=FAPI_BASE_V2)
             free = float(acct.get("availableBalance", "0") or 0)
-            qty = max(int(free * self.leverage / entry_price), int(5.0 / entry_price))
+            qty = max(int(free * self.leverage * 0.3 / entry_price), int(5.0 / entry_price))
             if qty <= 0:
                 log.warning("跳过 %s: 保证金不足(%.2f USDT)", api_sym, free)
                 return self._paper.enter(
@@ -106,27 +106,12 @@ class DemoBroker(BaseBroker):
             })
             oid = order.get("orderId", "?")
             _time.sleep(0.5)
-            fo = self._post("order", {"symbol": api_sym, "orderId": oid})
+            fo = self._get("order", {"symbol": api_sym, "orderId": str(oid)})
             filled = float(fo.get("executedQty", 0) or 0)
             cum = float(fo.get("cumQuote", 0) or 0)
             actual_price = cum / filled if filled > 0 else entry_price
-            log.info("demo filled %s qty=%s price=%s id=%s", api_sym, qty, actual_price, oid)
-
-            # SL (STOP_MARKET at /order, not /algoOrder)
-            sl_p = round(actual_price * 0.90, 6)
-            self._post("order", {
-                "symbol": api_sym, "side": "SELL", "type": "STOP_MARKET",
-                "quantity": str(qty), "stopPrice": str(sl_p), "positionSide": "LONG",
-            })
-            log.info("demo SL %s @ %s", api_sym, sl_p)
-
-            # TP (TAKE_PROFIT_MARKET at /order)
-            tp_p = round(actual_price * 1.30, 6)
-            self._post("order", {
-                "symbol": api_sym, "side": "SELL", "type": "TAKE_PROFIT_MARKET",
-                "quantity": str(qty), "stopPrice": str(tp_p), "positionSide": "LONG",
-            })
-            log.info("demo TP %s @ %s", api_sym, tp_p)
+            log.info("demo filled %s qty=%s price=%s(%s) id=%s", api_sym, qty, actual_price, fo.get("avgPrice","?"), oid)
+            # SL/TP handled by daemon REST polling (exchange algoOrder not available on demo)
 
         except Exception as e:
             log.warning("demo failed %s: %s, fallback paper", api_sym, e)
