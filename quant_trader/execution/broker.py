@@ -145,28 +145,31 @@ class DemoBroker(BaseBroker):
             actual_price = cum / filled if filled > 0 else entry_price
             log.info("demo filled %s qty=%s price=%s(%s) id=%s", api_sym, qty, actual_price, fo.get("avgPrice","?"), oid)
 
-            # SL/TP via Algo Order (CONDITIONAL) — requires algoType, triggerPrice, workingType
-            sl_p = round(actual_price * 0.90, 8)
+            # SL/TP via Algo Order (CONDITIONAL) — use closePosition=true to avoid
+            # pricePrecision/quantityPrecision issues on small-tick coins (e.g. AKE 7dp)
+            sl_p = round(actual_price * 0.90, 7)
             try:
                 self._post("algoOrder", {
                     "symbol": api_sym, "side": "SELL", "positionSide": "LONG",
                     "type": "STOP_MARKET", "algoType": "CONDITIONAL",
-                    "quantity": str(qty), "triggerPrice": str(sl_p),
+                    "closePosition": "true",
+                    "triggerPrice": str(sl_p),
                     "workingType": "MARK_PRICE",
                 })
-                log.info("demo SL %s @ %s", api_sym, sl_p)
+                log.info("demo SL %s @ %s (closePosition)", api_sym, sl_p)
             except Exception as e:
                 log.warning("demo SL failed %s: %s (daemon will monitor)", api_sym, e)
 
-            tp_p = round(actual_price * 1.30, 8)
+            tp_p = round(actual_price * 1.30, 7)
             try:
                 self._post("algoOrder", {
                     "symbol": api_sym, "side": "SELL", "positionSide": "LONG",
                     "type": "TAKE_PROFIT_MARKET", "algoType": "CONDITIONAL",
-                    "quantity": str(qty), "triggerPrice": str(tp_p),
+                    "closePosition": "true",
+                    "triggerPrice": str(tp_p),
                     "workingType": "MARK_PRICE",
                 })
-                log.info("demo TP %s @ %s", api_sym, tp_p)
+                log.info("demo TP %s @ %s (closePosition)", api_sym, tp_p)
             except Exception as e:
                 log.warning("demo TP failed %s: %s (daemon will monitor)", api_sym, e)
 
