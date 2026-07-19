@@ -23,15 +23,16 @@ def _sign(secret: str, params: dict) -> str:
     return hmac.new(secret.encode(), q.encode(), hashlib.sha256).hexdigest()
 
 
-def _post(path: str, api_key: str, secret: str, params: dict,
-          proxy: Optional[str] = None) -> dict:
+def _sign_and_send(method: str, path: str, api_key: str, secret: str,
+                    params: dict, proxy: Optional[str] = None) -> dict:
     params["timestamp"] = int(_time.time() * 1000)
     params["recvWindow"] = 10000
     q = "&".join(f"{k}={v}" for k, v in sorted(params.items()))
     sig = _sign(secret, params)
     url = f"{FAPI_BASE}/{path}?{q}&signature={sig}"
     proxies = {"http": proxy, "https": proxy} if proxy else None
-    r = _requests.post(url, headers={"X-MBX-APIKEY": api_key}, proxies=proxies, timeout=10)
+    fn = _requests.get if method == "GET" else _requests.post
+    r = fn(url, headers={"X-MBX-APIKEY": api_key}, proxies=proxies, timeout=10)
     r.raise_for_status()
     return r.json()
 
@@ -66,8 +67,14 @@ class DemoBroker(BaseBroker):
         self._paper = PaperBroker()
         self.leverage = int(getattr(settings.backtest, "leverage", 3))
 
+    def _api(method: str, path: str, params: dict) -> dict:
+        return _sign_and_send(method, path, self.api_key, self.secret, params, self.proxy)
+
     def _post(self, path: str, params: dict) -> dict:
-        return _post(path, self.api_key, self.secret, params, self.proxy)
+        return _sign_and_send("POST", path, self.api_key, self.secret, params, self.proxy)
+
+    def _get(self, path: str, params: dict) -> dict:
+        return _sign_and_send("GET", path, self.api_key, self.secret, params, self.proxy)
 
     def enter(self, *, symbol: str, strategy: str, params: dict,
               entry_ts: str, entry_price: float, leverage: float,
@@ -77,7 +84,7 @@ class DemoBroker(BaseBroker):
 
         try:
             # Get available balance
-            acct = self._post("account", {})
+            acct = self._get("account", {})
             free = float(acct.get("availableBalance", "0") or 0)
             qty = max(int(free * self.leverage / entry_price), int(5.0 / entry_price))
             if qty <= 0:
