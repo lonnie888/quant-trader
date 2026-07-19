@@ -88,9 +88,16 @@ class DemoBroker(BaseBroker):
             # Get available balance
             acct = self._get("account", {}, base_url=FAPI_BASE_V2)
             free = float(acct.get("availableBalance", "0") or 0)
-            # Use 30% of free as margin; qty = margin * leverage / entry_price
-            # so position value = margin * leverage, margin = position/leverage
-            margin = free * 0.3
+            # Fixed 1000 USDT margin per position; qty = margin * leverage / entry_price
+            margin = 1000.0
+            if free < margin:
+                log.warning("跳过 %s: 余额不足(%.2f < 1000 USDT)", api_sym, free)
+                return self._paper.enter(
+                    symbol=symbol, strategy=strategy, params=params,
+                    entry_ts=entry_ts, entry_price=entry_price,
+                    leverage=leverage, open_day=open_day,
+                    log_path=log_path, risk_check=risk_check,
+                )
             raw_qty = int(margin * leverage / entry_price)
             min_qty = max(int(5.0 / entry_price), 1)
             qty = max(raw_qty, min_qty)
