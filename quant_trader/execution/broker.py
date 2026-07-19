@@ -88,7 +88,10 @@ class DemoBroker(BaseBroker):
             # Get available balance
             acct = self._get("account", {}, base_url=FAPI_BASE_V2)
             free = float(acct.get("availableBalance", "0") or 0)
-            raw_qty = int(free * self.leverage * 0.3 / entry_price)
+            # Use 30% of free as margin; qty = margin * leverage / entry_price
+            # so position value = margin * leverage, margin = position/leverage
+            margin = free * 0.3
+            raw_qty = int(margin * leverage / entry_price)
             min_qty = max(int(5.0 / entry_price), 1)
             qty = max(raw_qty, min_qty)
 
