@@ -16,6 +16,7 @@ from quant_trader.execution.paper_ledger import get_open_positions, close_positi
 log = logging.getLogger(__name__)
 
 FAPI_BASE = "https://demo-fapi.binance.com/fapi/v1"
+FAPI_BASE_V2 = "https://demo-fapi.binance.com/fapi/v2"
 
 
 def _sign(secret: str, params: dict) -> str:
@@ -24,12 +25,13 @@ def _sign(secret: str, params: dict) -> str:
 
 
 def _sign_and_send(method: str, path: str, api_key: str, secret: str,
-                    params: dict, proxy: Optional[str] = None) -> dict:
+                    params: dict, proxy: Optional[str] = None,
+                    base_url: str = FAPI_BASE) -> dict:
     params["timestamp"] = int(_time.time() * 1000)
     params["recvWindow"] = 10000
     q = "&".join(f"{k}={v}" for k, v in sorted(params.items()))
     sig = _sign(secret, params)
-    url = f"{FAPI_BASE}/{path}?{q}&signature={sig}"
+    url = f"{base_url}/{path}?{q}&signature={sig}"
     proxies = {"http": proxy, "https": proxy} if proxy else None
     fn = _requests.get if method == "GET" else _requests.post
     r = fn(url, headers={"X-MBX-APIKEY": api_key}, proxies=proxies, timeout=10)
@@ -84,7 +86,7 @@ class DemoBroker(BaseBroker):
 
         try:
             # Get available balance
-            acct = self._get("account", {})
+            acct = self._get("account", {}, base_url=FAPI_BASE_V2)
             free = float(acct.get("availableBalance", "0") or 0)
             qty = max(int(free * self.leverage / entry_price), int(5.0 / entry_price))
             if qty <= 0:
