@@ -88,7 +88,30 @@ class DemoBroker(BaseBroker):
             # Get available balance
             acct = self._get("account", {}, base_url=FAPI_BASE_V2)
             free = float(acct.get("availableBalance", "0") or 0)
-            qty = max(int(free * self.leverage * 0.3 / entry_price), int(5.0 / entry_price))
+            raw_qty = int(free * self.leverage * 0.3 / entry_price)
+            min_qty = max(int(5.0 / entry_price), 1)
+            qty = max(raw_qty, min_qty)
+
+            # Fetch exchange info to respect LOT_SIZE/MARKET_LOT_SIZE
+            try:
+                ei = _requests.get(
+                    f"{FAPI_BASE}/exchangeInfo",
+                    params={"symbol": api_sym},
+                    proxies={"http": self.proxy, "https": self.proxy} if self.proxy else None,
+                    timeout=5,
+                ).json()
+                for sym in ei.get("symbols", []):
+                    if sym["symbol"] == api_sym:
+                        for f in sym.get("filters", []):
+                            if f["filterType"] == "MARKET_LOT_SIZE":
+                                max_qty = int(float(f["maxQty"]))
+                                qty = min(qty, max_qty)
+                            if f["filterType"] == "LOT_SIZE":
+                                step = int(float(f["stepSize"]))
+                                qty = (qty // step) * step  # round down to step
+            except Exception:
+                pass  # fallback: use raw qty
+
             if qty <= 0:
                 log.warning("跳过 %s: 保证金不足(%.2f USDT)", api_sym, free)
                 return self._paper.enter(
