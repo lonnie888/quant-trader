@@ -151,10 +151,7 @@ async def _refresh_watchlist(broker, settings, top_n: int = 30,
                         prev = v
                     if s[-1] == 1 and last_entry >= 0:
                         bars_since = len(s) - 1 - last_entry
-                        if bars_since > 2:
-                            log.warning("跳过 %s: 信号滞后 %d 根K线(追高防护)", sym, bars_since)
-                            continue
-                        # 额外检查：最近12根K线内必须有 ≥13% 的泵
+                                                # 额外检查：最近12根K线内必须有 ≥13% 的泵
                         # 防止"持仓延续"信号在下跌趋势中误开仓
                         pump_window = 12
                         pump_threshold = 0.13

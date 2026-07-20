@@ -153,10 +153,7 @@ class KlineStrategyLoop:
                 prev = v
             if s[-1] == 1 and last_entry >= 0:
                 bars_since = len(s) - 1 - last_entry
-                if bars_since > 2:
-                    log.warning("跳过 %s: 信号滞后 %d 根K线(追高防护)", sym, bars_since)
-                    continue
-                # Get current mark price from mark stream
+                                # Get current mark price from mark stream
                 mark = self._mark_provider(sym) if self._mark_provider else float(df.iloc[-1]["close"])
                 now_ts = datetime.now(timezone.utc).isoformat()
                 today = now.strftime("%Y-%m-%d")

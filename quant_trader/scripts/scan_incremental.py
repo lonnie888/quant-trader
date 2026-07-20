@@ -202,10 +202,7 @@ def run():
                 prev = v
             if s[-1] == 1 and last_entry >= 0:
                 bars_since = len(s) - 1 - last_entry
-                if bars_since > 2:
-                    log.warning("跳过 %s: 信号滞后 %d 根K线(追高防护)", sym, bars_since)
-                    continue
-                # 有信号：取当前实时市价开单，而非K线收盘价
+                                # 有信号：取当前实时市价开单，而非K线收盘价
                 now_ts = datetime.now(timezone.utc).isoformat()
                 current_api_sym = sym.split("/")[0].split(":")[0] + "USDT"
                 cached_price = price_cache.get(current_api_sym)
