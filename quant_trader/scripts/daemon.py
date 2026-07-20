@@ -307,6 +307,9 @@ async def _positions_report_loop(settings, stop_event, watchlist_event: asyncio.
                 profitable=profitable,
                 positions=positions_data,
             )
+            if len(open_pos) == 0:
+                log.info("positions report skipped: 0 open positions")
+                return
             from quant_trader.execution.notifier import FeishuNotifier
             fw = getattr(settings.notify, "feishu_webhook", None)
             FeishuNotifier(webhook_url=fw).send_card(card)
