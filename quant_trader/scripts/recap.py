@@ -143,7 +143,7 @@ def generate(date: str, ledger_path: Path = LEDGER) -> tuple[Path, dict]:
     return out, stats
 
 
-def send_feishu(stats: dict) -> bool:
+def send_feishu(stats: dict, webhook_url: str = None) -> bool:
     """Send daily recap to Feishu webhook."""
     try:
         from quant_trader.execution.notifier import FeishuNotifier
@@ -211,7 +211,7 @@ def send_feishu(stats: dict) -> bool:
         },
     }
 
-    feishu = FeishuNotifier()
+    feishu = FeishuNotifier(webhook_url=webhook_url)
     return feishu.send_card(card)
 
 

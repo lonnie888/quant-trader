@@ -318,10 +318,11 @@ async def _positions_report_loop(settings, stop_event, watchlist_event: asyncio.
             log.warning("positions report failed: %s", e)
 
 
-async def _daily_recap_loop(stop_event):
+async def _daily_recap_loop(settings, stop_event):
     """Trigger daily recap at 00:00 UTC (= 08:00 北京时间) each day."""
     while not stop_event.is_set():
         from quant_trader.scripts.recap import generate, send_feishu
+        fw = getattr(settings.notify, "feishu_webhook", None)
         from datetime import datetime, timezone, timedelta
         now = datetime.now(timezone.utc)
         # Next 00:00 UTC = 北京时间 08:00
@@ -341,7 +342,7 @@ async def _daily_recap_loop(stop_event):
         try:
             date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
             out, stats = generate(date)
-            ok = send_feishu(stats)
+            ok = send_feishu(stats, webhook_url=fw)
             log.info("daily recap %s: realized=%+.2f%% trades=%d feishu=%s",
                      date, stats["realized_pct"], stats["trades"], "ok" if ok else "skip")
         except Exception as e:
@@ -477,7 +478,7 @@ async def main():
             _refresh_watchlist(broker, settings, refresh_event=refresh_event),
             name="watchlist",
         ),
-        asyncio.create_task(_daily_recap_loop(stop_event), name="daily_recap"),
+        asyncio.create_task(_daily_recap_loop(settings, stop_event), name="daily_recap"),
         asyncio.create_task(_positions_report_loop(settings, stop_event, refresh_event), name="positions_report"),
     ]
 
