@@ -170,13 +170,6 @@ async def _refresh_watchlist(broker, settings, top_n: int = 30,
                         allowed, reason = evaluate_risk(all_events, **risk_check)
                         if not allowed:
                             blocked += 1
-                            broker.enter(
-                                symbol=sym, strategy=name, params=params,
-                                entry_ts=now_ts, entry_price=entry_price,
-                                leverage=float(settings.backtest.leverage),
-                                open_day=today, log_path=positions_path,
-                                risk_check=risk_check,
-                            )
                             continue
                         ev = broker.enter(
                             symbol=sym, strategy=name, params=params,
