@@ -134,6 +134,7 @@ def generate(date: str, ledger_path: Path = LEDGER) -> tuple[Path, dict]:
         "trades": len(closed_today),
         "blocked": len(blocked_today),
         "open_today": len(open_today),
+        "open_list": [e["symbol"].replace("/USDT:USDT", "") for e in open_today],
         "win_rate": round(win_rate, 1),
         "avg_win_pct": round(avg_win * 100, 2),
         "avg_loss_pct": round(avg_loss * 100, 2),
@@ -172,6 +173,8 @@ def send_feishu(stats: dict, webhook_url: str = None) -> bool:
                  "content": f"**📊 交易数**\n{stats['trades']}"}},
                 {"is_short": True, "text": {"tag": "lark_md",
                  "content": f"**⛔ 风控阻挡**\n{stats['blocked']}"}},
+                {"is_short": True, "text": {"tag": "lark_md",
+                 "content": f"**🆕 今日开仓**\n{stats['open_today']}"}},
             ],
         },
         {"tag": "hr"},
@@ -184,6 +187,14 @@ def send_feishu(stats: dict, webhook_url: str = None) -> bool:
             )},
         },
     ]
+    if stats.get("open_list"):
+        elements.append({"tag": "hr"})
+        lines = [f"`{s}`" for s in stats["open_list"]]
+        elements.append({
+            "tag": "div",
+            "text": {"tag": "lark_md", "content": "**开仓明细**\n" + " ".join(lines)},
+        })
+
     if stats.get("per_symbol"):
         elements.append({"tag": "hr"})
         per_sym_lines = []
