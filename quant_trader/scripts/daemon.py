@@ -76,6 +76,7 @@ async def _refresh_watchlist(broker, settings, top_n: int = 30,
             }
             today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
             opened = 0
+            opened_syms = []
             blocked = 0
             now = datetime.now(timezone.utc)
 
@@ -180,6 +181,7 @@ async def _refresh_watchlist(broker, settings, top_n: int = 30,
                         )
                         if ev is not None and ev.status == "open":
                             opened += 1
+                            opened_syms.append(sym.split("/")[0].split(":")[0])
                             log.info("✅ [watchlist] open %s @ %.6f id=%d", sym, entry_price, ev.id)
             if opened > 0 or blocked > 0:
                 try:
@@ -191,6 +193,7 @@ async def _refresh_watchlist(broker, settings, top_n: int = 30,
                         as_of=today, gainers=gainer_pairs,
                         accepted=opened, blocked=blocked,
                         open_pos=len(get_open_positions(positions_path)),
+                        opened_symbols=opened_syms,
                     )
                     feishu.send_card(card)
                 except Exception:

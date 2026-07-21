@@ -131,7 +131,8 @@ class FeishuCardBuilder:
 
     @staticmethod
     def make_daily_summary(as_of: str, gainers: list[tuple[str, float]],
-                           accepted: int, blocked: int, open_pos: int) -> dict:
+                           accepted: int, blocked: int, open_pos: int,
+                           opened_symbols: list[str] = None) -> dict:
         """Build daily signal summary card. gainers: list of (symbol_short, pct_24h)."""
         if accepted > 0:
             header_template = "green"
@@ -173,12 +174,21 @@ class FeishuCardBuilder:
                      "content": f"**📦 持仓**\n{open_pos} Open"}},
                 ],
             },
-            {
-                "tag": "note",
-                "elements": [{"tag": "plain_text",
-                              "content": f"⏱ {as_of} · pump_pullback 策略 · watchlist 15min"}],
-            },
         ]
+
+        if opened_symbols:
+            elements.append({"tag": "hr"})
+            elements.append({
+                "tag": "div",
+                "text": {"tag": "lark_md",
+                         "content": "**开仓明细**\n" + " ".join(f"`{s}`" for s in opened_symbols)},
+            })
+
+        elements.append({
+            "tag": "note",
+            "elements": [{"tag": "plain_text",
+                          "content": f"⏱ {as_of} · pump_pullback 策略 · watchlist 15min"}],
+        })
 
         return {
             "msg_type": "interactive",
