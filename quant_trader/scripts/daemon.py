@@ -177,7 +177,12 @@ async def _refresh_watchlist(broker, settings, top_n: int = 30,
                         allowed, reason = evaluate_risk(all_events, **risk_check)
                         if not allowed:
                             blocked += 1
-                            blocked_list.append((sym.split("/")[0].split(":")[0], reason))
+                            reason_zh = {
+                                "max_concurrent": "已达持仓上限",
+                                "max_total_exposure": "总敞口超限",
+                                "daily_loss_limit": "日亏损达限",
+                            }.get(reason, reason)
+                            blocked_list.append((sym.split("/")[0].split(":")[0], reason_zh))
                             continue
                         ev = broker.enter(
                             symbol=sym, strategy=name, params=params,
