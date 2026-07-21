@@ -78,6 +78,7 @@ async def _refresh_watchlist(broker, settings, top_n: int = 30,
             opened = 0
             opened_syms = []
             blocked = 0
+            blocked_list = []
             cooldown_symbols = set(getattr(settings.risk, "trade_cooldown_symbols", set()))
             now = datetime.now(timezone.utc)
 
@@ -165,6 +166,8 @@ async def _refresh_watchlist(broker, settings, top_n: int = 30,
                             pump_pct = win_high / win_low - 1 if win_low > 0 else 0
                             if pump_pct < pump_threshold:
                                 log.warning("跳过 %s: 最近12根K线无泵(涨幅%.1f%%<13%%)", sym, pump_pct * 100)
+                                blocked += 1
+                                blocked_list.append((sym.split("/")[0].split(":")[0], f"无泵(涨幅{pump_pct*100:.1f}%)"))
                                 continue
                         # 用最新已收盘 K 线收盘价开单，与回测一致
                         # 实时 ticker 价格可能已偏离信号 K 线，造成追高
@@ -174,6 +177,7 @@ async def _refresh_watchlist(broker, settings, top_n: int = 30,
                         allowed, reason = evaluate_risk(all_events, **risk_check)
                         if not allowed:
                             blocked += 1
+                            blocked_list.append((sym.split("/")[0].split(":")[0], reason))
                             continue
                         ev = broker.enter(
                             symbol=sym, strategy=name, params=params,
@@ -197,6 +201,7 @@ async def _refresh_watchlist(broker, settings, top_n: int = 30,
                         accepted=opened, blocked=blocked,
                         open_pos=len(get_open_positions(positions_path)),
                         opened_symbols=opened_syms,
+                        blocked_list=blocked_list,
                     )
                     feishu.send_card(card)
                 except Exception:
