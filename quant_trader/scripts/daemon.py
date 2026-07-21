@@ -78,6 +78,7 @@ async def _refresh_watchlist(broker, settings, top_n: int = 30,
             opened = 0
             opened_syms = []
             blocked = 0
+            cooldown_symbols = set(getattr(settings.risk, "trade_cooldown_symbols", set()))
             now = datetime.now(timezone.utc)
 
             # 1h cooldown for timeout exits
@@ -135,6 +136,8 @@ async def _refresh_watchlist(broker, settings, top_n: int = 30,
                 if df is None or df.empty or len(df) < 100:
                     df = store.load(sym, "15m")
                 if df is None or df.empty or len(df) < 100:
+                    continue
+                if sym in cooldown_symbols:
                     continue
                 for name, params, strat in instances:
                     try:
@@ -402,9 +405,18 @@ async def main():
     feishu_webhook = getattr(settings.notify, "feishu_webhook", None)
     feishu = FeishuNotifier(webhook_url=feishu_webhook)
 
+    def _add_cooldown(sym_short: str):
+        """Add symbol to trade cooldown set (avoid re-entry after SL)."""
+        cooldown = cooldown_symbols
+        cooldown.add(sym_short)
+        log.info("cooldown added %s (24h skip)", sym_short)
+
     def _on_sltp_close(closed: dict):
         """Called by sltp.on_mark when a position is auto-closed."""
         try:
+            sym_short = closed.get("symbol", "").split("/")[0].split(":")[0]
+            if closed.get("exit_reason") == "stop_loss":
+                _add_cooldown(sym_short)
             # Close demo position too
             broker.exit(
                 position_id=int(closed.get("id", 0)),
