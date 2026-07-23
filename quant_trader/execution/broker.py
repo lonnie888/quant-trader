@@ -33,7 +33,7 @@ def _sign_and_send(method: str, path: str, api_key: str, secret: str,
     sig = _sign(secret, params)
     url = f"{base_url}/{path}?{q}&signature={sig}"
     proxies = {"http": proxy, "https": proxy} if proxy else None
-    fn = _requests.get if method == "GET" else _requests.post
+    fn = _requests.get if method == "GET" else _requests.delete if method == "DELETE" else _requests.post
     r = fn(url, headers={"X-MBX-APIKEY": api_key}, proxies=proxies, timeout=10)
     r.raise_for_status()
     return r.json()
@@ -77,6 +77,9 @@ class DemoBroker(BaseBroker):
 
     def _get(self, path: str, params: dict, base_url: str = FAPI_BASE) -> dict:
         return _sign_and_send("GET", path, self.api_key, self.secret, params, self.proxy, base_url)
+
+    def _delete(self, path: str, params: dict) -> dict:
+        return _sign_and_send("DELETE", path, self.api_key, self.secret, params, self.proxy)
 
     def enter(self, *, symbol: str, strategy: str, params: dict,
               entry_ts: str, entry_price: float, leverage: float,
@@ -234,6 +237,12 @@ class DemoBroker(BaseBroker):
                 sym = e["symbol"]
                 api_sym = sym.split("/")[0].split(":")[0] + "USDT"
                 try:
+                    # Cancel all open algo orders (SL/TP) for this symbol first
+                    try:
+                        self._delete("algoOpenOrders", {"symbol": api_sym})
+                        log.info("demo cancelled algo orders %s", api_sym)
+                    except Exception as e:
+                        log.warning("demo cancel algo orders failed %s: %s", api_sym, e)
                     # Calculate actual qty from position: margin = notional / leverage
                     # For paper ledger, we stored only entry_price and leverage
                     entry = float(e["entry_price"])
