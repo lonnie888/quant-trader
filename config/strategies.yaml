@@ -16,6 +16,6 @@ strategies:
       ema_period: [12]
       hold_bars: [24]
       cooldown: [12]
-      stop_loss_pct: [0.10]
-      take_profit_pct: [0.30]
+      stop_loss_pct: [0.12]
+      take_profit_pct: [0.20]
       side: ["long_only"]
