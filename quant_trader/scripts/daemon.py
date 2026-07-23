@@ -232,7 +232,11 @@ async def _positions_report_loop(settings, stop_event, watchlist_event: asyncio.
     positions_path = Path("reports/paper/positions.jsonl")
 
     def _fetch_prices_sync():
-        return sync_req.get(FAPI_TICKER, proxies={"http": PROXY, "https": PROXY}, timeout=10).json()
+        try:
+            return sync_req.get(FAPI_TICKER, proxies={"http": PROXY, "https": PROXY}, timeout=10).json()
+        except Exception as e:
+            log.warning("positions report: ticker fetch failed: %s", e)
+            return []
 
     while not stop_event.is_set():
         # Wait for watchlist to finish a refresh cycle
@@ -261,11 +265,8 @@ async def _positions_report_loop(settings, stop_event, watchlist_event: asyncio.
                     realized_today += e.get("pnl_pct_lev", 0.0) or 0.0
 
             price_map = {}
-            try:
-                tickers = _fetch_prices_sync()
-                price_map = {p["symbol"]: float(p["price"]) for p in tickers}
-            except Exception as e:
-                log.warning("positions report: ticker fetch failed: %s", e)
+            tickers = _fetch_prices_sync()
+            price_map = {p["symbol"]: float(p["price"]) for p in tickers}
 
             positions_data = []
             total_unrealized = 0.0
