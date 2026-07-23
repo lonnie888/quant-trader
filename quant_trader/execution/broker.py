@@ -234,11 +234,40 @@ class DemoBroker(BaseBroker):
                 sym = e["symbol"]
                 api_sym = sym.split("/")[0].split(":")[0] + "USDT"
                 try:
+                    # Calculate actual qty from position: margin = notional / leverage
+                    # For paper ledger, we stored only entry_price and leverage
+                    entry = float(e["entry_price"])
+                    lev = float(e.get("leverage", 3.0))
+                    # Use the position size from the paper ledger (qty = margin * lev / entry)
+                    # Margin is fixed at 1000 USDT per position
+                    margin = 1000.0
+                    qty = int(margin * lev / entry)
+                    from quant_trader.execution.broker import DemoBroker
+                    # Round down to LOT_SIZE step
+                    try:
+                        import requests as _req
+                        ei = _req.get(
+                            f"{FAPI_BASE}/exchangeInfo",
+                            params={"symbol": api_sym},
+                            proxies={"http": self.proxy, "https": self.proxy} if self.proxy else None,
+                            timeout=5,
+                        ).json()
+                        for sym_info in ei.get("symbols", []):
+                            if sym_info["symbol"] == api_sym:
+                                for f in sym_info.get("filters", []):
+                                    if f["filterType"] == "LOT_SIZE":
+                                        step = int(float(f["stepSize"]))
+                                        qty = (qty // step) * step
+                                        break
+                    except Exception:
+                        pass
+                    if qty <= 0:
+                        qty = 1
                     self._post("order", {
                         "symbol": api_sym, "side": "SELL", "type": "MARKET",
-                        "quantity": "1", "positionSide": "LONG",
+                        "quantity": str(qty), "positionSide": "LONG",
                     })
-                    log.info("demo closed %s id=%s", api_sym, position_id)
+                    log.info("demo closed %s id=%s qty=%s", api_sym, position_id, qty)
                 except Exception as e:
                     log.warning("demo close failed %s: %s", api_sym, e)
                 break
