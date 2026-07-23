@@ -131,6 +131,15 @@ class DemoBroker(BaseBroker):
                     log_path=log_path, risk_check=risk_check,
                 )
 
+            # Set leverage before placing market order
+            try:
+                self._post("leverage", {
+                    "symbol": api_sym, "leverage": str(int(leverage)),
+                })
+                log.info("demo leverage set %s = %sx", api_sym, int(leverage))
+            except Exception as e:
+                log.warning("demo leverage set failed %s: %s", api_sym, e)
+
             # Market buy
             log.info("demo buy %s qty=%s", api_sym, qty)
             order = self._post("order", {
