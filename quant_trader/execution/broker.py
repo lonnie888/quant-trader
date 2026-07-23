@@ -274,6 +274,7 @@ class DemoBroker(BaseBroker):
         return self._paper.exit(
             position_id=position_id, exit_ts=exit_ts,
             exit_price=exit_price, exit_reason=exit_reason,
+            log_path=log_path,
         )
 
     def get_positions(self) -> list[dict]:
