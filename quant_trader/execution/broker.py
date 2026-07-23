@@ -154,33 +154,59 @@ class DemoBroker(BaseBroker):
             actual_price = cum / filled if filled > 0 else entry_price
             log.info("demo filled %s qty=%s price=%s(%s) id=%s", api_sym, qty, actual_price, fo.get("avgPrice","?"), oid)
 
-            # SL/TP via Algo Order (CONDITIONAL) — use closePosition=true to avoid
-            # pricePrecision/quantityPrecision issues on small-tick coins (e.g. AKE 7dp)
-            sl_p = round(actual_price * 0.90, 7)
-            try:
-                self._post("algoOrder", {
-                    "symbol": api_sym, "side": "SELL", "positionSide": "LONG",
-                    "type": "STOP_MARKET", "algoType": "CONDITIONAL",
-                    "closePosition": "true",
-                    "triggerPrice": str(sl_p),
-                    "workingType": "MARK_PRICE",
-                })
-                log.info("demo SL %s @ %s (closePosition)", api_sym, sl_p)
-            except Exception as e:
-                log.warning("demo SL failed %s: %s (daemon will monitor)", api_sym, e)
+            # 4 个 Algo Order 挂单策略:
+            # SL @ -3%  → closePosition=true (兜底，全平)
+            # TP1 @ +6% → 平 50% 数量
+            # TP2 @ +12% → 平 30% 数量
+            # TP3 @ +18% → 平 20% 数量
+            # 用 LOT_SIZE 取整防止精度问题
 
-            tp_p = round(actual_price * 1.30, 7)
-            try:
-                self._post("algoOrder", {
+            def _lot_round(q: float) -> int:
+                try:
+                    ei = _requests.get(
+                        f"{FAPI_BASE}/exchangeInfo",
+                        params={"symbol": api_sym},
+                        proxies={"http": self.proxy, "https": self.proxy} if self.proxy else None,
+                        timeout=5,
+                    ).json()
+                    for sym in ei.get("symbols", []):
+                        if sym["symbol"] == api_sym:
+                            for f in sym.get("filters", []):
+                                if f["filterType"] == "LOT_SIZE":
+                                    step = int(float(f["stepSize"]))
+                                    return (int(q) // step) * step
+                except Exception:
+                    pass
+                return int(q)
+
+            def _post_algo(typ: str, trigger: float, qty_arg, suffix: str):
+                params = {
                     "symbol": api_sym, "side": "SELL", "positionSide": "LONG",
-                    "type": "TAKE_PROFIT_MARKET", "algoType": "CONDITIONAL",
-                    "closePosition": "true",
-                    "triggerPrice": str(tp_p),
+                    "type": typ, "algoType": "CONDITIONAL",
+                    "triggerPrice": str(round(trigger, 7)),
                     "workingType": "MARK_PRICE",
-                })
-                log.info("demo TP %s @ %s (closePosition)", api_sym, tp_p)
-            except Exception as e:
-                log.warning("demo TP failed %s: %s (daemon will monitor)", api_sym, e)
+                }
+                if qty_arg == "close":
+                    params["closePosition"] = "true"
+                else:
+                    qty_rounded = _lot_round(qty_arg)
+                    if qty_rounded <= 0:
+                        return
+                    params["quantity"] = str(qty_rounded)
+                try:
+                    self._post("algoOrder", params)
+                    log.info("demo %s %s @ %s (qty=%s)", suffix, api_sym, params["triggerPrice"], qty_arg)
+                except Exception as e:
+                    log.warning("demo %s failed %s: %s (daemon will monitor)", suffix, api_sym, e)
+
+            # SL/TP from strategy params (consistent with backtest)
+            sl_pct = float(params.get("stop_loss_pct", 0.12))
+            tp_pct = float(params.get("take_profit_pct", 0.20))
+
+            # SL @ -sl_pct% 用 qty 100% (兼容性更好，不用 closePosition)
+            _post_algo("STOP_MARKET", actual_price * (1 - sl_pct), qty, "SL")
+            # TP @ +tp_pct% 用 qty 100%
+            _post_algo("TAKE_PROFIT_MARKET", actual_price * (1 + tp_pct), qty, "TP")
 
         except Exception as e:
             log.warning("demo failed %s: %s, fallback paper", api_sym, e)
