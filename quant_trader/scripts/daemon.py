@@ -425,33 +425,35 @@ async def main():
     def _on_sltp_close(closed: dict):
         """Called by sltp.on_mark when a position is auto-closed."""
         try:
-            sym_short = closed.get("symbol", "").split("/")[0].split(":")[0]
-            if closed.get("exit_reason") == "stop_loss":
-                _add_cooldown(sym_short)
-            # Close demo position too
-            broker.exit(
-                position_id=int(closed.get("id", 0)),
-                exit_ts=closed.get("exit_ts", datetime.now(timezone.utc).isoformat()),
-                exit_price=float(closed.get("exit_price", 0)),
-                exit_reason=closed.get("exit_reason", ""),
-                log_path=Path("reports/paper/positions.jsonl"),
-            )
             ev = closed
+            sym_short = ev.get("symbol", "").split("/")[0].split(":")[0]
+            if ev.get("exit_reason") == "stop_loss":
+                _add_cooldown(sym_short)
+            # 先发飞书通知（即使 broker.exit 失败也要通知）
             entry = float(ev.get("entry_price", 0))
             exit_ = float(ev.get("exit_price", 0))
             pnl = float(ev.get("pnl_pct_lev", 0) or 0)
             reason = ev.get("exit_reason", "")
             sym = ev.get("symbol", "")
-            max_fav = float(ev.get("max_favorable_pct", 0) or 0)
-            max_adv = float(ev.get("max_adverse_pct", 0) or 0)
             card = FeishuCardBuilder.make_position_close(
                 symbol=sym, exit_reason=reason,
                 entry_price=entry, exit_price=exit_,
                 pnl_pct_lev=pnl,
-                max_fav_pct=max_fav, max_adv_pct=max_adv,
+                max_fav_pct=0.0, max_adv_pct=0.0,
             )
             feishu.send_card(card)
-            log.info("feishu SL/TP notify: %s reason=%s pnl=%+.2f%%", sym, reason, pnl*100)
+            log.info("feishu close notify: %s reason=%s pnl=%+.2f%%", sym, reason, pnl*100)
+            # 再关 demo 仓位（单独 try，失败不影响通知）
+            try:
+                broker.exit(
+                    position_id=int(ev.get("id", 0)),
+                    exit_ts=ev.get("exit_ts", datetime.now(timezone.utc).isoformat()),
+                    exit_price=float(ev.get("exit_price", 0)),
+                    exit_reason=ev.get("exit_reason", ""),
+                    log_path=Path("reports/paper/positions.jsonl"),
+                )
+            except Exception as e:
+                log.warning("demo close failed %s: %s", sym, e)
         except Exception as e:
             log.warning("feishu SL/TP notify failed: %s", e)
 
