@@ -41,6 +41,9 @@ log = logging.getLogger("daemon")
 DEFAULT_WATCHLIST: list[str] = []
 
 
+# Module-level trade cooldown set (stop_loss prevention)
+_COOLDOWN_SYMBOLS: set = set()
+
 async def _refresh_watchlist(broker, settings, top_n: int = 30,
                              refresh_event: asyncio.Event | None = None):
     """Periodic task: refresh watchlist from gainers scanner and run strategy."""
@@ -137,7 +140,7 @@ async def _refresh_watchlist(broker, settings, top_n: int = 30,
                     df = store.load(sym, "15m")
                 if df is None or df.empty or len(df) < 100:
                     continue
-                if sym in _cooldown_symbols:
+                if sym in _COOLDOWN_SYMBOLS:
                     continue
                 for name, params, strat in instances:
                     try:
@@ -414,11 +417,9 @@ async def main():
     from quant_trader.execution.notifier import FeishuNotifier, FeishuCardBuilder
     feishu_webhook = getattr(settings.notify, "feishu_webhook", None)
     feishu = FeishuNotifier(webhook_url=feishu_webhook)
-    _cooldown_symbols: set = set()
-
     def _add_cooldown(sym_short: str):
         """Add symbol to trade cooldown set (avoid re-entry after SL)."""
-        _cooldown_symbols.add(sym_short)
+        _COOLDOWN_SYMBOLS.add(sym_short)
         log.info("cooldown added %s (24h skip)", sym_short)
 
     def _on_sltp_close(closed: dict):
