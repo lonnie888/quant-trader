@@ -79,7 +79,6 @@ async def _refresh_watchlist(broker, settings, top_n: int = 30,
             opened_syms = []
             blocked = 0
             blocked_list = []
-            cooldown_symbols = set(getattr(settings.risk, "trade_cooldown_symbols", set()))
             now = datetime.now(timezone.utc)
 
             # 1h cooldown for timeout exits
@@ -138,7 +137,7 @@ async def _refresh_watchlist(broker, settings, top_n: int = 30,
                     df = store.load(sym, "15m")
                 if df is None or df.empty or len(df) < 100:
                     continue
-                if sym in cooldown_symbols:
+                if sym in _cooldown_symbols:
                     continue
                 for name, params, strat in instances:
                     try:
@@ -418,8 +417,7 @@ async def main():
 
     def _add_cooldown(sym_short: str):
         """Add symbol to trade cooldown set (avoid re-entry after SL)."""
-        cooldown = cooldown_symbols
-        cooldown.add(sym_short)
+        _cooldown_symbols.add(sym_short)
         log.info("cooldown added %s (24h skip)", sym_short)
 
     def _on_sltp_close(closed: dict):
