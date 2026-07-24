@@ -277,39 +277,29 @@ class DemoBroker(BaseBroker):
                 sym = e["symbol"]
                 api_sym = sym.split("/")[0].split(":")[0] + "USDT"
                 try:
-                    # Cancel all open algo orders (SL/TP) for this symbol first
+                    # 取消所有算法单（SL/TP）先
                     try:
                         self._delete("algoOpenOrders", {"symbol": api_sym})
                         log.info("demo cancelled algo orders %s", api_sym)
                     except Exception as e:
                         log.warning("demo cancel algo orders failed %s: %s", api_sym, e)
-                    # Calculate actual qty from position: margin = notional / leverage
-                    # For paper ledger, we stored only entry_price and leverage
-                    entry = float(e["entry_price"])
-                    lev = float(e.get("leverage", 3.0))
-                    # Use the position size from the paper ledger (qty = margin * lev / entry)
-                    # Margin is fixed at 1000 USDT per position
-                    margin = 1000.0
-                    qty = int(margin * lev / entry)
-                    from quant_trader.execution.broker import DemoBroker
-                    # Round down to LOT_SIZE step
+                    # 从 demo 真实仓位读取 qty（避免反推误差）
+                    actual_qty = 0
                     try:
-                        import requests as _req
-                        ei = _req.get(
-                            f"{FAPI_BASE}/exchangeInfo",
-                            params={"symbol": api_sym},
-                            proxies={"http": self.proxy, "https": self.proxy} if self.proxy else None,
-                            timeout=5,
-                        ).json()
-                        for sym_info in ei.get("symbols", []):
-                            if sym_info["symbol"] == api_sym:
-                                for f in sym_info.get("filters", []):
-                                    if f["filterType"] == "LOT_SIZE":
-                                        step = int(float(f["stepSize"]))
-                                        qty = (qty // step) * step
-                                        break
-                    except Exception:
-                        pass
+                        pr = self._get("positionRisk", {"symbol": api_sym})
+                        if isinstance(pr, list):
+                            for p in pr:
+                                if p.get("symbol") == api_sym:
+                                    actual_qty = abs(float(p.get("positionAmt", 0)))
+                                    break
+                    except Exception as e:
+                        log.warning("demo positionRisk fetch failed %s: %s", api_sym, e)
+                    if actual_qty <= 0:
+                        # fallback: 用 ledger 反推
+                        entry = float(e["entry_price"])
+                        lev = float(e.get("leverage", 3.0))
+                        actual_qty = int(1000.0 * lev / entry)
+                    qty = int(actual_qty)
                     if qty <= 0:
                         qty = 1
                     self._post("order", {
