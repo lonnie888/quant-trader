@@ -414,6 +414,7 @@ async def main():
     from quant_trader.execution.notifier import FeishuNotifier, FeishuCardBuilder
     feishu_webhook = getattr(settings.notify, "feishu_webhook", None)
     feishu = FeishuNotifier(webhook_url=feishu_webhook)
+    _cooldown_symbols: set = set()
 
     def _add_cooldown(sym_short: str):
         """Add symbol to trade cooldown set (avoid re-entry after SL)."""
