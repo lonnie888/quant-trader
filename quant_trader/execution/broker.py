@@ -183,16 +183,56 @@ class DemoBroker(BaseBroker):
                 return int(q)
 
             def _post_algo(typ: str, trigger: float, qty_arg, suffix: str):
+                # 用 LOT_SIZE step 取整 quantity
+                def _step_round(q: float) -> int:
+                    try:
+                        ei = _requests.get(
+                            f"{FAPI_BASE}/exchangeInfo",
+                            params={"symbol": api_sym},
+                            proxies={"http": self.proxy, "https": self.proxy} if self.proxy else None,
+                            timeout=5,
+                        ).json()
+                        for sym_info in ei.get("symbols", []):
+                            if sym_info["symbol"] == api_sym:
+                                for f in sym_info.get("filters", []):
+                                    if f["filterType"] == "LOT_SIZE":
+                                        step = int(float(f["stepSize"]))
+                                        return (int(q) // step) * step
+                    except Exception:
+                        pass
+                    return int(q)
+                # 按 PRICE_FILTER tickSize 取整 triggerPrice
+                def _price_round(p: float) -> str:
+                    try:
+                        ei = _requests.get(
+                            f"{FAPI_BASE}/exchangeInfo",
+                            params={"symbol": api_sym},
+                            proxies={"http": self.proxy, "https": self.proxy} if self.proxy else None,
+                            timeout=5,
+                        ).json()
+                        for sym_info in ei.get("symbols", []):
+                            if sym_info["symbol"] == api_sym:
+                                for f in sym_info.get("filters", []):
+                                    if f["filterType"] == "PRICE_FILTER":
+                                        tick = float(f.get("tickSize", 0.000001))
+                                        if tick > 0:
+                                            rounded = round(round(p / tick) * tick, 8)
+                                            # 去掉尾随的零以避免精度问题
+                                            return f"{rounded:.8f}".rstrip("0").rstrip(".")
+                                        return f"{p:.6f}"
+                    except Exception:
+                        pass
+                    return f"{p:.6f}"
                 params = {
                     "symbol": api_sym, "side": "SELL", "positionSide": "LONG",
                     "type": typ, "algoType": "CONDITIONAL",
-                    "triggerPrice": str(round(trigger, 7)),
+                    "triggerPrice": _price_round(trigger),
                     "workingType": "MARK_PRICE",
                 }
                 if qty_arg == "close":
                     params["closePosition"] = "true"
                 else:
-                    qty_rounded = _lot_round(qty_arg)
+                    qty_rounded = _step_round(qty_arg)
                     if qty_rounded <= 0:
                         return
                     params["quantity"] = str(qty_rounded)
