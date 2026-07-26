@@ -272,17 +272,17 @@ class DemoBroker(BaseBroker):
              exit_price: float, exit_reason: str, log_path: Path):
         from quant_trader.execution.paper_ledger import get_all_positions
         events = get_all_positions(log_path)
-        for e in events:
-            if e.get("id") == position_id and e.get("status") == "open":
-                sym = e["symbol"]
+        for pos in events:
+            if pos.get("id") == position_id and pos.get("status") == "open":
+                sym = pos["symbol"]
                 api_sym = sym.split("/")[0].split(":")[0] + "USDT"
                 try:
                     # 取消所有算法单（SL/TP）先
                     try:
                         self._delete("algoOpenOrders", {"symbol": api_sym})
                         log.info("demo cancelled algo orders %s", api_sym)
-                    except Exception as e:
-                        log.warning("demo cancel algo orders failed %s: %s", api_sym, e)
+                    except Exception as ex:
+                        log.warning("demo cancel algo orders failed %s: %s", api_sym, ex)
                     # 从 demo 真实仓位读取 qty（避免反推误差）
                     actual_qty = 0
                     try:
@@ -292,12 +292,12 @@ class DemoBroker(BaseBroker):
                                 if p.get("symbol") == api_sym:
                                     actual_qty = abs(float(p.get("positionAmt", 0)))
                                     break
-                    except Exception as e:
-                        log.warning("demo positionRisk fetch failed %s: %s", api_sym, e)
+                    except Exception as ex:
+                        log.warning("demo positionRisk fetch failed %s: %s", api_sym, ex)
                     if actual_qty <= 0:
                         # fallback: 用 ledger 反推
-                        entry = float(e["entry_price"])
-                        lev = float(e.get("leverage", 3.0))
+                        entry = float(pos["entry_price"])
+                        lev = float(pos.get("leverage", 3.0))
                         actual_qty = int(1000.0 * lev / entry)
                     qty = int(actual_qty)
                     if qty <= 0:
@@ -307,8 +307,8 @@ class DemoBroker(BaseBroker):
                         "quantity": str(qty), "positionSide": "LONG",
                     })
                     log.info("demo closed %s id=%s qty=%s", api_sym, position_id, qty)
-                except Exception as e:
-                    log.warning("demo close failed %s: %s", api_sym, e)
+                except Exception as ex:
+                    log.warning("demo close failed %s: %s", api_sym, ex)
                 break
         return self._paper.exit(
             position_id=position_id, exit_ts=exit_ts,
