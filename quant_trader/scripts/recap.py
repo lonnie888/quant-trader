@@ -38,13 +38,13 @@ def _resolve_open(events: list[dict]) -> dict[int, dict]:
     """Resolve final status per id: open+later-closed → closed. open+later-blocked → blocked."""
     by_id: dict[int, dict] = {}
     for ev in events:
-        eid = int(e["id"])
-        if e.get("status") == "open":
-            by_id[eid] = e
+        eid = int(ev["id"])
+        if ev.get("status") == "open":
+            by_id[eid] = ev
         elif eid in by_id:
-            by_id[eid] = e  # later close/blocked wins
+            by_id[eid] = ev  # later close/blocked wins
         else:
-            by_id[eid] = e
+            by_id[eid] = ev
     return by_id
 
 
@@ -61,7 +61,7 @@ def generate(date: str, ledger_path: Path = LEDGER) -> tuple[Path, dict]:
         elif ev.get("status") == "blocked" and ev.get("open_day") == date:
             blocked_today.append(ev)
 
-    pnls = [e.get("pnl_pct_lev", 0.0) or 0.0 for ev in closed_today]
+    pnls = [ev.get("pnl_pct_lev", 0.0) or 0.0 for ev in closed_today]
     realized = sum(pnls)
     wins = [p for p in pnls if p > 0]
     losses = [p for p in pnls if p < 0]
@@ -78,7 +78,7 @@ def generate(date: str, ledger_path: Path = LEDGER) -> tuple[Path, dict]:
     # Per-symbol aggregation for closed trades
     per_sym: dict[str, list[float]] = defaultdict(list)
     for ev in closed_today:
-        per_sym[e["symbol"]].append(e.get("pnl_pct_lev", 0.0) or 0.0)
+        per_sym[ev["symbol"]].append(ev.get("pnl_pct_lev", 0.0) or 0.0)
 
     out = ROOT / "reports" / "paper" / f"recap-{date}.md"
     lines = [
@@ -97,27 +97,27 @@ def generate(date: str, ledger_path: Path = LEDGER) -> tuple[Path, dict]:
         "| ---: | --- | --- | ---: | ---: | :---: | ---: |",
     ]
     for ev in sorted(closed_today, key=lambda x: x.get("exit_ts", "")):
-        pnl = e.get("pnl_pct_lev", 0.0) or 0.0
-        sym_s = e["symbol"].replace("/USDT:USDT", "")
+        pnl = ev.get("pnl_pct_lev", 0.0) or 0.0
+        sym_s = ev["symbol"].replace("/USDT:USDT", "")
         lines.append(
-            f"| {e['id']} | {sym_s} | {e['strategy']} | "
-            f"{e['entry_price']:.6f} | {e['exit_price']:.6f} | "
-            f"{e['exit_reason']} | {pnl*100:+.2f}% |"
+            f"| {ev['id']} | {sym_s} | {ev['strategy']} | "
+            f"{ev['entry_price']:.6f} | {ev['exit_price']:.6f} | "
+            f"{ev['exit_reason']} | {pnl*100:+.2f}% |"
         )
 
     if blocked_today:
         lines += ["", f"## Blocked by risk ({len(blocked_today)})", ""]
         reasons: dict[str, int] = defaultdict(int)
         for ev in blocked_today:
-            reasons[e.get("block_reason", "?")] += 1
+            reasons[ev.get("block_reason", "?")] += 1
         for r, c in sorted(reasons.items(), key=lambda x: -x[1]):
             lines.append(f"- `{r}` × {c}")
 
     if open_today:
         lines += ["", f"## Open positions from today ({len(open_today)})", ""]
         for ev in open_today:
-            sym_s = e["symbol"].replace("/USDT:USDT", "")
-            lines.append(f"- id={e['id']} {sym_s} @ `{e['entry_price']:.6f}`")
+            sym_s = ev["symbol"].replace("/USDT:USDT", "")
+            lines.append(f"- id={ev['id']} {sym_s} @ `{ev['entry_price']:.6f}`")
 
     lines += [
         "",
@@ -134,7 +134,7 @@ def generate(date: str, ledger_path: Path = LEDGER) -> tuple[Path, dict]:
         "trades": len(closed_today),
         "blocked": len(blocked_today),
         "open_today": len(open_today),
-        "open_list": [e["symbol"].replace("/USDT:USDT", "") for ev in open_today],
+        "open_list": [ev["symbol"].replace("/USDT:USDT", "") for ev in open_today],
         "win_rate": round(win_rate, 1),
         "avg_win_pct": round(avg_win * 100, 2),
         "avg_loss_pct": round(avg_loss * 100, 2),

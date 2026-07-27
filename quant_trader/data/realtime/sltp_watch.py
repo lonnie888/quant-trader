@@ -23,11 +23,11 @@ class SLTPWatch:
         all_events = get_all_positions()
         closed_ids = set()
         for ev in all_events:
-            if e.get("status") in ("closed", "blocked"):
-                closed_ids.add(int(e["id"]))
+            if ev.get("status") in ("closed", "blocked"):
+                closed_ids.add(int(ev["id"]))
         live_open = [
-            e for ev in all_events
-            if e.get("status") == "open" and int(e["id"]) not in closed_ids
+            ev for ev in all_events
+            if ev.get("status") == "open" and int(ev["id"]) not in closed_ids
         ]
         for pos in live_open:
             if pos["symbol"].upper() != symbol.upper():
@@ -39,8 +39,8 @@ class SLTPWatch:
                 tp = pos.get("tp_price")
                 tp = float(tp) if tp is not None else None
                 hold_bars = int(pos["params"].get("hold_bars", 24))
-            except (KeyError, TypeError, ValueError) as e:
-                log.warning("malformed position id=%d: %s", pos_id, e)
+            except (KeyError, TypeError, ValueError) as ev:
+                log.warning("malformed position id=%d: %s", pos_id, ev)
                 continue
 
             exit_reason = None
@@ -80,4 +80,4 @@ class SLTPWatch:
                     try:
                         self.on_close(closed)
                     except Exception as ex:
-                        log.exception("on_close error: %s", e)
+                        log.exception("on_close error: %s", ev)

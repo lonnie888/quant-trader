@@ -87,13 +87,13 @@ async def _refresh_watchlist(broker, settings, top_n: int = 30,
             # 1h cooldown for timeout exits
             cooldown_syms = set()
             for ev in get_all_positions(positions_path):
-                if e.get("status") == "closed" and e.get("exit_reason") == "time":
-                    ts = e.get("exit_ts")
+                if ev.get("status") == "closed" and ev.get("exit_reason") == "time":
+                    ts = ev.get("exit_ts")
                     if ts:
                         try:
                             dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
                             if (now - dt).total_seconds() < 3600:
-                                cooldown_syms.add(e["symbol"])
+                                cooldown_syms.add(ev["symbol"])
                         except Exception:
                             pass
 
@@ -133,7 +133,7 @@ async def _refresh_watchlist(broker, settings, top_n: int = 30,
                         store.save(sym, "15m", _df)
                         df = _df
                 except Exception as ex:
-                    log.warning("下载K线失败 %s: %s, 回退缓存", api_sym, e)
+                    log.warning("下载K线失败 %s: %s, 回退缓存", api_sym, ev)
 
                 # 拉新失败时回退缓存，缓存也没有则跳过
                 if df is None or df.empty or len(df) < 100:
@@ -214,7 +214,7 @@ async def _refresh_watchlist(broker, settings, top_n: int = 30,
                 except Exception:
                     pass
         except Exception as ex:
-            log.warning("watchlist refresh failed: %s", e)
+            log.warning("watchlist refresh failed: %s", ev)
         # Signal positions_report task that a refresh cycle is complete
         if refresh_event is not None:
             refresh_event.set()
@@ -237,7 +237,7 @@ async def _positions_report_loop(settings, stop_event, watchlist_event: asyncio.
         try:
             return sync_req.get(FAPI_TICKER, proxies={"http": PROXY, "https": PROXY}, timeout=10).json()
         except Exception as ex:
-            log.warning("positions report: ticker fetch failed: %s", e)
+            log.warning("positions report: ticker fetch failed: %s", ev)
             return []
 
     while not stop_event.is_set():
@@ -304,7 +304,7 @@ async def _positions_report_loop(settings, stop_event, watchlist_event: asyncio.
                     "max_adverse_pct": 0.0,
                 })
 
-            total_closed = sum(1 for ev in all_events if e.get("status") == "closed")
+            total_closed = sum(1 for ev in all_events if ev.get("status") == "closed")
             profitable = sum(1 for p in positions_data if p["pnl_pct_lev"] > 0)
 
             card = FeishuCardBuilder.make_positions_check(
@@ -355,7 +355,7 @@ async def _daily_recap_loop(settings, stop_event):
             log.info("daily recap %s: realized=%+.2f%% trades=%d feishu=%s",
                      date, stats["realized_pct"], stats["trades"], "ok" if ok else "skip")
         except Exception as ex:
-            log.warning("daily recap failed: %s", e)
+            log.warning("daily recap failed: %s", ev)
 
 
 async def _rest_poll_loop(settings, kline_loop, sltp, stop_event):
@@ -376,7 +376,7 @@ async def _rest_poll_loop(settings, kline_loop, sltp, stop_event):
                     r.raise_for_status()
                     tickers = await r.json()
         except Exception as ex:
-            log.warning("rest poll price fetch failed: %s", e)
+            log.warning("rest poll price fetch failed: %s", ev)
             return
 
         price_map = {p["symbol"]: float(p["price"]) for p in tickers}
@@ -384,11 +384,11 @@ async def _rest_poll_loop(settings, kline_loop, sltp, stop_event):
         open_pos = []
         closed_ids = set()
         for ev in all_events:
-            if e.get("status") in ("closed", "blocked"):
-                closed_ids.add(int(e["id"]))
+            if ev.get("status") in ("closed", "blocked"):
+                closed_ids.add(int(ev["id"]))
         for ev in all_events:
-            if e.get("status") == "open" and int(e["id"]) not in closed_ids:
-                open_pos.append(e)
+            if ev.get("status") == "open" and int(ev["id"]) not in closed_ids:
+                open_pos.append(ev)
         if not open_pos:
             return
         for ev in open_pos:
@@ -402,7 +402,7 @@ async def _rest_poll_loop(settings, kline_loop, sltp, stop_event):
         try:
             await _check_sltp()
         except Exception as ex:
-            log.warning("rest poll error: %s", e)
+            log.warning("rest poll error: %s", ev)
         await asyncio.sleep(15)
 
 
@@ -453,9 +453,9 @@ async def main():
                     log_path=Path("reports/paper/positions.jsonl"),
                 )
             except Exception as ex:
-                log.warning("demo close failed %s: %s", sym, e)
+                log.warning("demo close failed %s: %s", sym, ev)
         except Exception as ex:
-            log.warning("feishu SL/TP notify failed: %s", e)
+            log.warning("feishu SL/TP notify failed: %s", ev)
 
     sltp.on_close = _on_sltp_close
 

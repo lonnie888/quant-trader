@@ -28,7 +28,7 @@ Fields:
   - exit_reason: "stop_loss" | "take_profit" | "time" | "manual"
   - pnl_pct:     raw return (not leveraged), only when closed
   - pnl_pct_lev: leveraged return, only when closed
-  - block_reason: short string when status=blocked (e.g. "max_concurrent")
+  - block_reason: short string when status=blocked (ev.g. "max_concurrent")
 """
 from __future__ import annotations
 
@@ -106,16 +106,16 @@ def _read_log(path: Path) -> list[dict]:
 
 
 def _next_id(events: list[dict]) -> int:
-    return (max((e["id"] for ev in events), default=0) + 1)
+    return (max((ev["id"] for ev in events), default=0) + 1)
 
 
 def _has_open(events: list[dict], symbol: str) -> bool:
     closed_ids: set[int] = set()
     for ev in events:
-        if e.get("status") in ("closed", "blocked"):
-            closed_ids.add(int(e["id"]))
+        if ev.get("status") in ("closed", "blocked"):
+            closed_ids.add(int(ev["id"]))
     for ev in events:
-        if e["symbol"] == symbol and e["status"] == "open" and int(e["id"]) not in closed_ids:
+        if ev["symbol"] == symbol and ev["status"] == "open" and int(ev["id"]) not in closed_ids:
             return True
     return False
 
@@ -124,18 +124,18 @@ def _today_realized_pnl(events: list[dict], today: str) -> float:
     """Sum leveraged PnL of all events that closed today (UTC date)."""
     total = 0.0
     for ev in events:
-        if e["status"] != "closed":
+        if ev["status"] != "closed":
             continue
-        if not e.get("exit_ts"):
+        if not ev.get("exit_ts"):
             continue
         # exit_ts is ISO; compare its UTC date to today
         try:
-            d = datetime.fromisoformat(e["exit_ts"].replace("Z", "+00:00")).strftime("%Y-%m-%d")
+            d = datetime.fromisoformat(ev["exit_ts"].replace("Z", "+00:00")).strftime("%Y-%m-%d")
         except Exception:
             continue
         if d != today:
             continue
-        pnl = e.get("pnl_pct_lev") or 0.0
+        pnl = ev.get("pnl_pct_lev") or 0.0
         total += pnl
     return total
 
@@ -157,9 +157,9 @@ def evaluate_risk(
     # Only count open events without matching closed/blocked
     closed_ids: set[int] = set()
     for ev in events:
-        if e.get("status") in ("closed", "blocked"):
-            closed_ids.add(int(e["id"]))
-    open_pos = [e for ev in events if e["status"] == "open" and int(e["id"]) not in closed_ids]
+        if ev.get("status") in ("closed", "blocked"):
+            closed_ids.add(int(ev["id"]))
+    open_pos = [ev for ev in events if ev["status"] == "open" and int(ev["id"]) not in closed_ids]
     if len(open_pos) >= max_concurrent:
         return False, "max_concurrent"
 
@@ -256,9 +256,9 @@ def get_open_positions(log_path: Path = DEFAULT_LOG) -> list[dict]:
     events = _read_log(log_path)
     closed_ids: set[int] = set()
     for ev in events:
-        if e.get("status") in ("closed", "blocked"):
-            closed_ids.add(int(e["id"]))
-    return [e for ev in events if e["status"] == "open" and int(e["id"]) not in closed_ids]
+        if ev.get("status") in ("closed", "blocked"):
+            closed_ids.add(int(ev["id"]))
+    return [ev for ev in events if ev["status"] == "open" and int(ev["id"]) not in closed_ids]
 
 
 def get_all_positions(log_path: Path = DEFAULT_LOG) -> list[dict]:
@@ -280,7 +280,7 @@ def close_position(
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with _file_lock(log_path):
         events = _read_log(log_path)
-        open_ev = next((e for ev in events if e["id"] == position_id and e["status"] == "open"), None)
+        open_ev = next((ev for ev in events if ev["id"] == position_id and ev["status"] == "open"), None)
         if open_ev is None:
             log.warning("close: no open event with id=%d", position_id)
             return None

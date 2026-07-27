@@ -73,12 +73,12 @@ class KlineStrategyLoop:
         try:
             self._update_cache(sym, interval, k)
         except Exception as ex:
-            log.warning("cache update failed %s: %s", sym, e)
+            log.warning("cache update failed %s: %s", sym, ev)
         # Run strategy
         try:
             self._check_signal(sym)
         except Exception as ex:
-            log.exception("signal check failed %s: %s", sym, e)
+            log.exception("signal check failed %s: %s", sym, ev)
 
     def _update_cache(self, sym: str, interval: str, k: dict):
         ts = pd.Timestamp(k["t"], unit="ms", tz="UTC")
@@ -108,13 +108,13 @@ class KlineStrategyLoop:
         cooldown = set()
         now = datetime.now(timezone.utc)
         for ev in all_events:
-            if e.get("status") == "closed" and e.get("exit_reason") == "time":
-                ts = e.get("exit_ts")
+            if ev.get("status") == "closed" and ev.get("exit_reason") == "time":
+                ts = ev.get("exit_ts")
                 if ts:
                     try:
                         dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
                         if (now - dt).total_seconds() < self.cooldown_seconds:
-                            cooldown.add(e["symbol"])
+                            cooldown.add(ev["symbol"])
                     except Exception:
                         pass
 
@@ -140,7 +140,7 @@ class KlineStrategyLoop:
             try:
                 sigs = strat.generate_signals(df)
             except Exception as ex:
-                log.warning("%s strat failed: %s", sym, e)
+                log.warning("%s strat failed: %s", sym, ev)
                 continue
             if sigs.empty:
                 continue

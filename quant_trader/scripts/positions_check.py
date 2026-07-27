@@ -202,12 +202,12 @@ def main():
         try:
             entry_ms = int(datetime.fromisoformat(ev["entry_ts"].replace("Z", "+00:00")).timestamp() * 1000)
         except Exception as ex:
-            log.warning("bad entry_ts on id=%d: %s", ev["id"], e)
+            log.warning("bad entry_ts on id=%d: %s", ev["id"], ev)
             continue
         try:
             klines = _fetch_klines_since(ev["symbol"], entry_ms, now_ms)
         except Exception as ex:
-            log.warning("fetch failed %s: %s", ev["symbol"], e)
+            log.warning("fetch failed %s: %s", ev["symbol"], ev)
             continue
         if not klines:
             log.warning("no klines for %s since entry", ev["symbol"])
@@ -255,13 +255,13 @@ def main():
     all_events = get_all_positions(log_path)
     realized_today = 0.0
     for ev in all_events:
-        if e.get("status") == "closed" and e.get("exit_ts"):
+        if ev.get("status") == "closed" and ev.get("exit_ts"):
             try:
-                d = datetime.fromisoformat(e["exit_ts"].replace("Z", "+00:00")).strftime("%Y-%m-%d")
+                d = datetime.fromisoformat(ev["exit_ts"].replace("Z", "+00:00")).strftime("%Y-%m-%d")
             except Exception:
                 continue
             if d == today:
-                realized_today += e.get("pnl_pct_lev", 0.0)
+                realized_today += ev.get("pnl_pct_lev", 0.0)
 
     out_path = Path(args.out) if args.out else Path(f"reports/paper/positions-{today}.md")
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -297,7 +297,7 @@ def main():
     # Summary notification
     # Summary counts from ledger
     open_count = len(rows)
-    closed_count = sum(1 for ev in all_events if e.get("status") == "closed")
+    closed_count = sum(1 for ev in all_events if ev.get("status") == "closed")
     profitable = sum(1 for r in rows if r["current_pnl_pct_lev"] > 0)
 
     # Summary notification (interactive card)
