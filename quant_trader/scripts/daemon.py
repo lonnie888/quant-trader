@@ -518,6 +518,9 @@ async def main():
     log.info("WebSocket disabled (incompatible with proxy in this environment).")
     log.info("REST polling (15s SL/TP) + watchlist (15min kline) active.")
 
+    # Sync demo with paper ledger on startup (close orphaned positions)
+    await _sync_demo_positions_on_startup(broker)
+
     log.info("daemon started: watchlist=%d symbols", len(DEFAULT_WATCHLIST))
     try:
         await stop_event.wait()
