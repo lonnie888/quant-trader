@@ -406,6 +406,79 @@ async def _rest_poll_loop(settings, kline_loop, sltp, stop_event):
         await asyncio.sleep(15)
 
 
+async def _sync_demo_positions_on_startup(broker):
+    """On startup, close any demo positions whose paper ledger entry is already closed.
+    This handles the case where a previous daemon died and left demo positions open.
+    """
+    try:
+        import hmac, hashlib, requests as _req, time as _t
+        from quant_trader.execution.broker import FAPI_BASE, DemoBroker
+        if not isinstance(broker, DemoBroker):
+            return
+        from quant_trader.execution.paper_ledger import get_all_positions
+        from pathlib import Path
+        positions_path = Path("reports/paper/positions.jsonl")
+        all_ledger = get_all_positions(positions_path)
+        # Get open positions by symbol
+        open_by_sym = {}
+        for ev in all_ledger:
+            if ev.get("status") == "open":
+                sym = ev["symbol"].split("/")[0].split(":")[0] + "USDT"
+                open_by_sym[sym] = True
+        # Get demo positions
+        proxy = broker.proxy
+        proxies = {"http": proxy, "https": proxy} if proxy else None
+        ts = int(_t.time() * 1000)
+        params = {"timestamp": str(ts), "recvWindow": "10000"}
+        q = "&".join(f"{k}={v}" for k,v in sorted(params.items()))
+        sig = hmac.new(broker.secret.encode(), q.encode(), hashlib.sha256).hexdigest()
+        url = f"{FAPI_BASE}/positionRisk?{q}&signature={sig}"
+        r = _req.get(url, headers={"X-MBX-APIKEY": broker.api_key}, proxies=proxies, timeout=10)
+        data = r.json()
+        if not isinstance(data, list):
+            log.warning("startup sync: unexpected response type %s", str(data)[:100])
+            return
+        closed = 0
+        for p in data:
+            amt = float(p.get("positionAmt", 0))
+            sym = p["symbol"]
+            if amt == 0:
+                continue
+            if sym not in open_by_sym:
+                log.warning("startup sync: closing orphan demo position %s qty=%s", sym, amt)
+                try:
+                    ts = int(_t.time() * 1000)
+                    params = {
+                        "symbol": sym, "side": "SELL" if amt > 0 else "BUY",
+                        "positionSide": "LONG" if amt > 0 else "SHORT",
+                        "type": "MARKET", "quantity": str(abs(int(amt))),
+                        "timestamp": str(ts), "recvWindow": "10000",
+                    }
+                    q = "&".join(f"{k}={v}" for k,v in sorted(params.items()))
+                    sig = hmac.new(broker.secret.encode(), q.encode(), hashlib.sha256).hexdigest()
+                    url = f"{FAPI_BASE}/order?{q}&signature={sig}"
+                    r2 = _req.post(url, headers={"X-MBX-APIKEY": broker.api_key}, proxies=proxies, timeout=10)
+                    log.info("startup sync: closed %s -> %s", sym, r2.status_code)
+                    closed += 1
+                except Exception as ex:
+                    log.warning("startup sync close failed %s: %s", sym, ex)
+                # Cancel algo orders
+                try:
+                    ts = int(_t.time() * 1000)
+                    params = {"symbol": sym, "timestamp": str(ts), "recvWindow": "10000"}
+                    q = "&".join(f"{k}={v}" for k,v in sorted(params.items()))
+                    sig = hmac.new(broker.secret.encode(), q.encode(), hashlib.sha256).hexdigest()
+                    _req.delete(f"{FAPI_BASE}/algoOpenOrders?{q}&signature={sig}", headers={"X-MBX-APIKEY": broker.api_key}, proxies=proxies, timeout=10)
+                except Exception:
+                    pass
+        if closed:
+            log.info("startup sync: closed %d orphan demo positions", closed)
+        else:
+            log.info("startup sync: no orphan demo positions found")
+    except Exception as ex:
+        log.warning("startup sync error: %s", ex)
+
+
 async def main():
     settings = load_settings()
     ws = FapiWS()
