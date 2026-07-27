@@ -86,7 +86,7 @@ async def _refresh_watchlist(broker, settings, top_n: int = 30,
 
             # 1h cooldown for timeout exits
             cooldown_syms = set()
-            for e in get_all_positions(positions_path):
+            for ev in get_all_positions(positions_path):
                 if e.get("status") == "closed" and e.get("exit_reason") == "time":
                     ts = e.get("exit_ts")
                     if ts:
@@ -132,7 +132,7 @@ async def _refresh_watchlist(broker, settings, top_n: int = 30,
                         _df = _df.set_index("timestamp")
                         store.save(sym, "15m", _df)
                         df = _df
-                except Exception as e:
+                except Exception as ex:
                     log.warning("下载K线失败 %s: %s, 回退缓存", api_sym, e)
 
                 # 拉新失败时回退缓存，缓存也没有则跳过
@@ -213,7 +213,7 @@ async def _refresh_watchlist(broker, settings, top_n: int = 30,
                     feishu.send_card(card)
                 except Exception:
                     pass
-        except Exception as e:
+        except Exception as ex:
             log.warning("watchlist refresh failed: %s", e)
         # Signal positions_report task that a refresh cycle is complete
         if refresh_event is not None:
@@ -236,7 +236,7 @@ async def _positions_report_loop(settings, stop_event, watchlist_event: asyncio.
     def _fetch_prices_sync():
         try:
             return sync_req.get(FAPI_TICKER, proxies={"http": PROXY, "https": PROXY}, timeout=10).json()
-        except Exception as e:
+        except Exception as ex:
             log.warning("positions report: ticker fetch failed: %s", e)
             return []
 
@@ -253,18 +253,18 @@ async def _positions_report_loop(settings, stop_event, watchlist_event: asyncio.
             open_pos = []
             closed_ids = set()
             all_events = get_all_positions(positions_path)
-            for e in all_events:
-                if e.get("status") in ("closed", "blocked"):
-                    closed_ids.add(int(e["id"]))
-            for e in all_events:
-                if e.get("status") == "open" and int(e["id"]) not in closed_ids:
-                    open_pos.append(e)
+            for ev in all_events:
+                if ev.get("status") in ("closed", "blocked"):
+                    closed_ids.add(int(ev["id"]))
+            for ev in all_events:
+                if ev.get("status") == "open" and int(ev["id"]) not in closed_ids:
+                    open_pos.append(ev)
 
             today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
             realized_today = 0.0
-            for e in all_events:
-                if e.get("status") == "closed" and e.get("exit_ts", "").startswith(today):
-                    realized_today += e.get("pnl_pct_lev", 0.0) or 0.0
+            for ev in all_events:
+                if ev.get("status") == "closed" and ev.get("exit_ts", "").startswith(today):
+                    realized_today += ev.get("pnl_pct_lev", 0.0) or 0.0
 
             price_map = {}
             tickers = _fetch_prices_sync()
@@ -304,7 +304,7 @@ async def _positions_report_loop(settings, stop_event, watchlist_event: asyncio.
                     "max_adverse_pct": 0.0,
                 })
 
-            total_closed = sum(1 for e in all_events if e.get("status") == "closed")
+            total_closed = sum(1 for ev in all_events if e.get("status") == "closed")
             profitable = sum(1 for p in positions_data if p["pnl_pct_lev"] > 0)
 
             card = FeishuCardBuilder.make_positions_check(
@@ -323,8 +323,8 @@ async def _positions_report_loop(settings, stop_event, watchlist_event: asyncio.
             fw = getattr(settings.notify, "feishu_webhook", None)
             FeishuNotifier(webhook_url=fw).send_card(card)
             log.info("positions report sent (after kline close): %d open", len(open_pos))
-        except Exception as e:
-            log.warning("positions report failed: %s", e)
+        except Exception as ex:
+            log.warning("positions report failed: %s", ex)
 
 
 async def _daily_recap_loop(settings, stop_event):
@@ -354,7 +354,7 @@ async def _daily_recap_loop(settings, stop_event):
             ok = send_feishu(stats, webhook_url=fw)
             log.info("daily recap %s: realized=%+.2f%% trades=%d feishu=%s",
                      date, stats["realized_pct"], stats["trades"], "ok" if ok else "skip")
-        except Exception as e:
+        except Exception as ex:
             log.warning("daily recap failed: %s", e)
 
 
@@ -375,7 +375,7 @@ async def _rest_poll_loop(settings, kline_loop, sltp, stop_event):
                 async with sess.get(FAPI_TICKER, proxy=PROXY, timeout=aiohttp.ClientTimeout(total=10)) as r:
                     r.raise_for_status()
                     tickers = await r.json()
-        except Exception as e:
+        except Exception as ex:
             log.warning("rest poll price fetch failed: %s", e)
             return
 
@@ -383,10 +383,10 @@ async def _rest_poll_loop(settings, kline_loop, sltp, stop_event):
         all_events = get_all_positions(positions_path)
         open_pos = []
         closed_ids = set()
-        for e in all_events:
+        for ev in all_events:
             if e.get("status") in ("closed", "blocked"):
                 closed_ids.add(int(e["id"]))
-        for e in all_events:
+        for ev in all_events:
             if e.get("status") == "open" and int(e["id"]) not in closed_ids:
                 open_pos.append(e)
         if not open_pos:
@@ -401,7 +401,7 @@ async def _rest_poll_loop(settings, kline_loop, sltp, stop_event):
     while not stop_event.is_set():
         try:
             await _check_sltp()
-        except Exception as e:
+        except Exception as ex:
             log.warning("rest poll error: %s", e)
         await asyncio.sleep(15)
 
@@ -452,9 +452,9 @@ async def main():
                     exit_reason=ev.get("exit_reason", ""),
                     log_path=Path("reports/paper/positions.jsonl"),
                 )
-            except Exception as e:
+            except Exception as ex:
                 log.warning("demo close failed %s: %s", sym, e)
-        except Exception as e:
+        except Exception as ex:
             log.warning("feishu SL/TP notify failed: %s", e)
 
     sltp.on_close = _on_sltp_close

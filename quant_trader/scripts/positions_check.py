@@ -201,12 +201,12 @@ def main():
     for ev in open_evs:
         try:
             entry_ms = int(datetime.fromisoformat(ev["entry_ts"].replace("Z", "+00:00")).timestamp() * 1000)
-        except Exception as e:
+        except Exception as ex:
             log.warning("bad entry_ts on id=%d: %s", ev["id"], e)
             continue
         try:
             klines = _fetch_klines_since(ev["symbol"], entry_ms, now_ms)
-        except Exception as e:
+        except Exception as ex:
             log.warning("fetch failed %s: %s", ev["symbol"], e)
             continue
         if not klines:
@@ -254,7 +254,7 @@ def main():
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     all_events = get_all_positions(log_path)
     realized_today = 0.0
-    for e in all_events:
+    for ev in all_events:
         if e.get("status") == "closed" and e.get("exit_ts"):
             try:
                 d = datetime.fromisoformat(e["exit_ts"].replace("Z", "+00:00")).strftime("%Y-%m-%d")
@@ -297,7 +297,7 @@ def main():
     # Summary notification
     # Summary counts from ledger
     open_count = len(rows)
-    closed_count = sum(1 for e in all_events if e.get("status") == "closed")
+    closed_count = sum(1 for ev in all_events if e.get("status") == "closed")
     profitable = sum(1 for r in rows if r["current_pnl_pct_lev"] > 0)
 
     # Summary notification (interactive card)

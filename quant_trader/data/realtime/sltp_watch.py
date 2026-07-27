@@ -22,11 +22,11 @@ class SLTPWatch:
         # Always re-read open positions from ledger (avoids stale in-memory state).
         all_events = get_all_positions()
         closed_ids = set()
-        for e in all_events:
+        for ev in all_events:
             if e.get("status") in ("closed", "blocked"):
                 closed_ids.add(int(e["id"]))
         live_open = [
-            e for e in all_events
+            e for ev in all_events
             if e.get("status") == "open" and int(e["id"]) not in closed_ids
         ]
         for pos in live_open:
@@ -79,5 +79,5 @@ class SLTPWatch:
                 if self.on_close is not None:
                     try:
                         self.on_close(closed)
-                    except Exception as e:
+                    except Exception as ex:
                         log.exception("on_close error: %s", e)

@@ -140,7 +140,7 @@ class DemoBroker(BaseBroker):
                     "symbol": api_sym, "leverage": str(int(leverage)),
                 })
                 log.info("demo leverage set %s = %sx", api_sym, int(leverage))
-            except Exception as e:
+            except Exception as ex:
                 log.warning("demo leverage set failed %s: %s", api_sym, e)
 
             # Market buy
@@ -239,7 +239,7 @@ class DemoBroker(BaseBroker):
                 try:
                     self._post("algoOrder", params)
                     log.info("demo %s %s @ %s (qty=%s)", suffix, api_sym, params["triggerPrice"], qty_arg)
-                except Exception as e:
+                except Exception as ex:
                     log.warning("demo %s failed %s: %s (daemon will monitor)", suffix, api_sym, e)
 
             # SL/TP from strategy params (consistent with backtest)
@@ -251,7 +251,7 @@ class DemoBroker(BaseBroker):
             # TP @ +tp_pct% 用 qty 100%
             _post_algo("TAKE_PROFIT_MARKET", actual_price * (1 + tp_pct), qty, "TP")
 
-        except Exception as e:
+        except Exception as ex:
             log.warning("demo failed %s: %s, fallback paper", api_sym, e)
             return self._paper.enter(
                 symbol=symbol, strategy=strategy, params=params,

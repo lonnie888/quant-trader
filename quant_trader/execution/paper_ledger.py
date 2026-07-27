@@ -106,15 +106,15 @@ def _read_log(path: Path) -> list[dict]:
 
 
 def _next_id(events: list[dict]) -> int:
-    return (max((e["id"] for e in events), default=0) + 1)
+    return (max((e["id"] for ev in events), default=0) + 1)
 
 
 def _has_open(events: list[dict], symbol: str) -> bool:
     closed_ids: set[int] = set()
-    for e in events:
+    for ev in events:
         if e.get("status") in ("closed", "blocked"):
             closed_ids.add(int(e["id"]))
-    for e in events:
+    for ev in events:
         if e["symbol"] == symbol and e["status"] == "open" and int(e["id"]) not in closed_ids:
             return True
     return False
@@ -123,7 +123,7 @@ def _has_open(events: list[dict], symbol: str) -> bool:
 def _today_realized_pnl(events: list[dict], today: str) -> float:
     """Sum leveraged PnL of all events that closed today (UTC date)."""
     total = 0.0
-    for e in events:
+    for ev in events:
         if e["status"] != "closed":
             continue
         if not e.get("exit_ts"):
@@ -156,10 +156,10 @@ def evaluate_risk(
     """
     # Only count open events without matching closed/blocked
     closed_ids: set[int] = set()
-    for e in events:
+    for ev in events:
         if e.get("status") in ("closed", "blocked"):
             closed_ids.add(int(e["id"]))
-    open_pos = [e for e in events if e["status"] == "open" and int(e["id"]) not in closed_ids]
+    open_pos = [e for ev in events if e["status"] == "open" and int(e["id"]) not in closed_ids]
     if len(open_pos) >= max_concurrent:
         return False, "max_concurrent"
 
@@ -255,10 +255,10 @@ def get_open_positions(log_path: Path = DEFAULT_LOG) -> list[dict]:
     """Return positions with status='open' that have no matching closed/blocked event."""
     events = _read_log(log_path)
     closed_ids: set[int] = set()
-    for e in events:
+    for ev in events:
         if e.get("status") in ("closed", "blocked"):
             closed_ids.add(int(e["id"]))
-    return [e for e in events if e["status"] == "open" and int(e["id"]) not in closed_ids]
+    return [e for ev in events if e["status"] == "open" and int(e["id"]) not in closed_ids]
 
 
 def get_all_positions(log_path: Path = DEFAULT_LOG) -> list[dict]:
@@ -280,7 +280,7 @@ def close_position(
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with _file_lock(log_path):
         events = _read_log(log_path)
-        open_ev = next((e for e in events if e["id"] == position_id and e["status"] == "open"), None)
+        open_ev = next((e for ev in events if e["id"] == position_id and e["status"] == "open"), None)
         if open_ev is None:
             log.warning("close: no open event with id=%d", position_id)
             return None
