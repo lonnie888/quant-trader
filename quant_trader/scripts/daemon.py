@@ -490,14 +490,25 @@ async def main():
     # Event to signal positions_report task that a watchlist refresh completed
     refresh_event = asyncio.Event()
 
+    async def _supervised(name, coro_factory):
+        """Restart task automatically on exception."""
+        while not stop_event.is_set():
+            try:
+                await coro_factory()
+            except asyncio.CancelledError:
+                break
+            except Exception as ex:
+                log.warning("task %s died: %s, restarting in 30s", name, ex)
+                try:
+                    await asyncio.wait_for(stop_event.wait(), timeout=30.0)
+                except asyncio.TimeoutError:
+                    pass
+
     tasks = [
-        asyncio.create_task(_rest_poll_loop(settings, kline_loop, sltp, stop_event), name="rest_poll"),
-        asyncio.create_task(
-            _refresh_watchlist(broker, settings, refresh_event=refresh_event),
-            name="watchlist",
-        ),
-        asyncio.create_task(_daily_recap_loop(settings, stop_event), name="daily_recap"),
-        asyncio.create_task(_positions_report_loop(settings, stop_event, refresh_event), name="positions_report"),
+        asyncio.create_task(_supervised("rest_poll", lambda: _rest_poll_loop(settings, kline_loop, sltp, stop_event)), name="rest_poll"),
+        asyncio.create_task(_supervised("watchlist", lambda: _refresh_watchlist(broker, settings, refresh_event=refresh_event)), name="watchlist"),
+        asyncio.create_task(_supervised("daily_recap", lambda: _daily_recap_loop(settings, stop_event)), name="daily_recap"),
+        asyncio.create_task(_supervised("positions_report", lambda: _positions_report_loop(settings, stop_event, refresh_event)), name="positions_report"),
     ]
 
     # WebSocket 在当前网络环境的 daemon 中无法稳定连接（aiohttp ws_connect
