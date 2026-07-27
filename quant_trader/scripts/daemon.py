@@ -412,7 +412,7 @@ async def _sync_demo_positions_on_startup(broker):
     """
     try:
         import hmac, hashlib, requests as _req, time as _t
-        from quant_trader.execution.broker import FAPI_BASE, DemoBroker
+        from quant_trader.execution.broker import FAPI_BASE, FAPI_BASE_V2, DemoBroker
         if not isinstance(broker, DemoBroker):
             return
         from quant_trader.execution.paper_ledger import get_all_positions
@@ -433,7 +433,7 @@ async def _sync_demo_positions_on_startup(broker):
         q = "&".join(f"{k}={v}" for k,v in sorted(params.items()))
         sig = hmac.new(broker.secret.encode(), q.encode(), hashlib.sha256).hexdigest()
         url = f"{FAPI_BASE}/positionRisk?{q}&signature={sig}"
-        r = _req.get(url, headers={"X-MBX-APIKEY": broker.api_key}, proxies=proxies, timeout=10)
+        r = _req.get(f"{FAPI_BASE_V2}/positionRisk?{q}&signature={sig}", headers={"X-MBX-APIKEY": broker.api_key}, proxies=proxies, timeout=10)
         data = r.json()
         if not isinstance(data, list):
             log.warning("startup sync: unexpected response type %s", str(data)[:100])
