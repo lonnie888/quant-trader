@@ -133,7 +133,7 @@ async def _refresh_watchlist(broker, settings, top_n: int = 30,
                         store.save(sym, "15m", _df)
                         df = _df
                 except Exception as ex:
-                    log.warning("下载K线失败 %s: %s, 回退缓存", api_sym, ev)
+                    log.warning("下载K线失败 %s: %s, 回退缓存", api_sym, ex)
 
                 # 拉新失败时回退缓存，缓存也没有则跳过
                 if df is None or df.empty or len(df) < 100:
