@@ -235,12 +235,28 @@ async def _positions_report_loop(settings, stop_event, watchlist_event: asyncio.
     PROXY = getattr(settings, "proxy", None)
     positions_path = Path("reports/paper/positions.jsonl")
 
+    _price_cache: dict = {}
+    _price_cache_ts: float = 0.0
+
     def _fetch_prices_sync():
+        nonlocal _price_cache, _price_cache_ts  # type: ignore
+        import time as _t
         try:
-            return sync_req.get(FAPI_TICKER, proxies={"http": PROXY, "https": PROXY}, timeout=10).json()
+            r = sync_req.get(FAPI_TICKER, proxies={"http": PROXY, "https": PROXY}, timeout=10,
+                             headers={"User-Agent": "Mozilla/5.0"})
+            data = r.json()
+            if isinstance(data, list) and len(data) > 0:
+                _price_cache.clear()
+                for p in data:
+                    _price_cache[p["symbol"]] = float(p["price"])
+                _price_cache_ts = _t.time()
+                return data
+            return list(_price_cache.values())
         except Exception as ex:
-            log.warning("positions report: ticker fetch failed: %s", ex)
-            return []
+            age = _t.time() - _price_cache_ts if _price_cache_ts else 0
+            log.warning("positions report: ticker fetch failed: %s (cache: %d symbols, %.0fs old)",
+                        ex, len(_price_cache), age)
+            return [{"symbol": s, "price": p} for s, p in _price_cache.items()]
 
     while not stop_event.is_set():
         # Wait for watchlist to finish a refresh cycle
