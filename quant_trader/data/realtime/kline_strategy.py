@@ -73,12 +73,12 @@ class KlineStrategyLoop:
         try:
             self._update_cache(sym, interval, k)
         except Exception as ex:
-            log.warning("cache update failed %s: %s", sym, ev)
+            log.warning("cache update failed %s: %s", sym, ex)
         # Run strategy
         try:
             self._check_signal(sym)
         except Exception as ex:
-            log.exception("signal check failed %s: %s", sym, ev)
+            log.exception("signal check failed %s: %s", sym, ex)
 
     def _update_cache(self, sym: str, interval: str, k: dict):
         ts = pd.Timestamp(k["t"], unit="ms", tz="UTC")
@@ -140,7 +140,7 @@ class KlineStrategyLoop:
             try:
                 sigs = strat.generate_signals(df)
             except Exception as ex:
-                log.warning("%s strat failed: %s", sym, ev)
+                log.warning("%s strat failed: %s", sym, ex)
                 continue
             if sigs.empty:
                 continue

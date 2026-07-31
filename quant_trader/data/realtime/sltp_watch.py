@@ -40,7 +40,7 @@ class SLTPWatch:
                 tp = float(tp) if tp is not None else None
                 hold_bars = int(pos["params"].get("hold_bars", 24))
             except (KeyError, TypeError, ValueError) as ev:
-                log.warning("malformed position id=%d: %s", pos_id, ev)
+                log.warning("malformed position id=%d: %s", pos_id, ex)
                 continue
 
             exit_reason = None
@@ -80,4 +80,4 @@ class SLTPWatch:
                     try:
                         self.on_close(closed)
                     except Exception as ex:
-                        log.exception("on_close error: %s", ev)
+                        log.exception("on_close error: %s", ex)

@@ -141,7 +141,7 @@ class DemoBroker(BaseBroker):
                 })
                 log.info("demo leverage set %s = %sx", api_sym, int(leverage))
             except Exception as ex:
-                log.warning("demo leverage set failed %s: %s", api_sym, ev)
+                log.warning("demo leverage set failed %s: %s", api_sym, ex)
 
             # Market buy
             log.info("demo buy %s qty=%s", api_sym, qty)
@@ -240,7 +240,7 @@ class DemoBroker(BaseBroker):
                     self._post("algoOrder", params)
                     log.info("demo %s %s @ %s (qty=%s)", suffix, api_sym, params["triggerPrice"], qty_arg)
                 except Exception as ex:
-                    log.warning("demo %s failed %s: %s (daemon will monitor)", suffix, api_sym, ev)
+                    log.warning("demo %s failed %s: %s (daemon will monitor)", suffix, api_sym, ex)
 
             # SL/TP from strategy params (consistent with backtest)
             sl_pct = float(params.get("stop_loss_pct", 0.12))
