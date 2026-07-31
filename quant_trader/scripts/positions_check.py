@@ -202,12 +202,12 @@ def main():
         try:
             entry_ms = int(datetime.fromisoformat(ev["entry_ts"].replace("Z", "+00:00")).timestamp() * 1000)
         except Exception as ex:
-            log.warning("bad entry_ts on id=%d: %s", ev["id"], ev)
+            log.warning("bad entry_ts on id=%d: %s", ev["id"], ex)
             continue
         try:
             klines = _fetch_klines_since(ev["symbol"], entry_ms, now_ms)
         except Exception as ex:
-            log.warning("fetch failed %s: %s", ev["symbol"], ev)
+            log.warning("fetch failed %s: %s", ev["symbol"], ex)
             continue
         if not klines:
             log.warning("no klines for %s since entry", ev["symbol"])

@@ -252,7 +252,7 @@ class DemoBroker(BaseBroker):
             _post_algo("TAKE_PROFIT_MARKET", actual_price * (1 + tp_pct), qty, "TP")
 
         except Exception as ex:
-            log.warning("demo failed %s: %s, fallback paper", api_sym, ev)
+            log.warning("demo failed %s: %s, fallback paper", api_sym, ex)
             return self._paper.enter(
                 symbol=symbol, strategy=strategy, params=params,
                 entry_ts=entry_ts, entry_price=entry_price,

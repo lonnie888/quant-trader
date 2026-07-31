@@ -197,6 +197,8 @@ async def _refresh_watchlist(broker, settings, top_n: int = 30,
                             opened += 1
                             opened_syms.append(sym.split("/")[0].split(":")[0])
                             log.info("✅ [watchlist] open %s @ %.6f id=%d", sym, entry_price, ev.id)
+                        else:
+                            pass  # enter failed, log already emitted by broker
             if opened > 0 or blocked > 0:
                 try:
                     from quant_trader.execution.notifier import FeishuNotifier, FeishuCardBuilder
@@ -237,7 +239,7 @@ async def _positions_report_loop(settings, stop_event, watchlist_event: asyncio.
         try:
             return sync_req.get(FAPI_TICKER, proxies={"http": PROXY, "https": PROXY}, timeout=10).json()
         except Exception as ex:
-            log.warning("positions report: ticker fetch failed: %s", ev)
+            log.warning("positions report: ticker fetch failed: %s", ex)
             return []
 
     while not stop_event.is_set():
@@ -355,7 +357,7 @@ async def _daily_recap_loop(settings, stop_event):
             log.info("daily recap %s: realized=%+.2f%% trades=%d feishu=%s",
                      date, stats["realized_pct"], stats["trades"], "ok" if ok else "skip")
         except Exception as ex:
-            log.warning("daily recap failed: %s", ev)
+            log.warning("daily recap failed: %s", ex)
 
 
 async def _rest_poll_loop(settings, kline_loop, sltp, stop_event):
@@ -376,7 +378,7 @@ async def _rest_poll_loop(settings, kline_loop, sltp, stop_event):
                     r.raise_for_status()
                     tickers = await r.json()
         except Exception as ex:
-            log.warning("rest poll price fetch failed: %s", ev)
+            log.warning("rest poll price fetch failed: %s", ex)
             return
 
         price_map = {p["symbol"]: float(p["price"]) for p in tickers}
@@ -402,7 +404,7 @@ async def _rest_poll_loop(settings, kline_loop, sltp, stop_event):
         try:
             await _check_sltp()
         except Exception as ex:
-            log.warning("rest poll error: %s", ev)
+            log.warning("rest poll error: %s", ex)
         await asyncio.sleep(15)
 
 
@@ -526,9 +528,9 @@ async def main():
                     log_path=Path("reports/paper/positions.jsonl"),
                 )
             except Exception as ex:
-                log.warning("demo close failed %s: %s", sym, ev)
+                log.warning("demo close failed %s: %s", sym, ex)
         except Exception as ex:
-            log.warning("feishu SL/TP notify failed: %s", ev)
+            log.warning("feishu SL/TP notify failed: %s", ex)
 
     sltp.on_close = _on_sltp_close
 
