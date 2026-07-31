@@ -15,6 +15,9 @@ from quant_trader.execution.paper_ledger import get_open_positions, close_positi
 
 log = logging.getLogger(__name__)
 
+# Endpoints: set per-broker in DemoBroker.__init__ based on settings.demo_trading.base_url
+# - Demo (testnet): https://demo-fapi.binance.com
+# - Real (production): https://fapi.binance.com
 FAPI_BASE = "https://demo-fapi.binance.com/fapi/v1"
 FAPI_BASE_V2 = "https://demo-fapi.binance.com/fapi/v2"
 
@@ -68,6 +71,19 @@ class DemoBroker(BaseBroker):
         self.proxy = proxy
         self._paper = PaperBroker()
         self.leverage = int(getattr(settings.backtest, "leverage", 3))
+        # Read base_url from settings; default to demo if not set
+        # Supports demo (testnet) and real (production) endpoints
+        self.base_url = (getattr(cfg, "base_url", None) or "https://demo-fapi.binance.com").rstrip("/")
+        self.is_real = "demo" not in self.base_url.lower() and "testnet" not in self.base_url.lower()
+        self._override_endpoints()
+        log.info("DemoBroker mode: %s (url=%s)", "REAL" if self.is_real else "DEMO", self.base_url)
+
+    def _override_endpoints(self):
+        """Override module-level FAPI_BASE constants with the configured base_url."""
+        global FAPI_BASE, FAPI_BASE_V2
+        base = self.base_url
+        FAPI_BASE = f"{base}/fapi/v1"
+        FAPI_BASE_V2 = f"{base}/fapi/v2"
 
     def _api(method: str, path: str, params: dict) -> dict:
         return _sign_and_send(method, path, self.api_key, self.secret, params, self.proxy)
@@ -91,10 +107,16 @@ class DemoBroker(BaseBroker):
             # Get available balance
             acct = self._get("account", {}, base_url=FAPI_BASE_V2)
             free = float(acct.get("availableBalance", "0") or 0)
-            # Fixed 1000 USDT margin per position; qty = margin * leverage / entry_price
-            margin = 1000.0
+            # SAFETY CAP: max margin per position
+            # - Real account: hard cap at 10 USDT (default), configurable
+            # - Demo: keep 1000 USDT for proper testing
+            if self.is_real:
+                margin_cap = float(getattr(risk_check or {}, "real_max_margin", 10.0)) if hasattr(risk_check or {}, "real_max_margin") else 10.0
+                margin = min(margin_cap, 10.0)  # hard cap 10 USDT
+            else:
+                margin = 1000.0
             if free < margin:
-                log.warning("跳过 %s: 余额不足(%.2f < 1000 USDT)", api_sym, free)
+                log.warning("跳过 %s: 余额不足(%.2f < %.0f USDT)", api_sym, free, margin)
                 return self._paper.enter(
                     symbol=symbol, strategy=strategy, params=params,
                     entry_ts=entry_ts, entry_price=entry_price,

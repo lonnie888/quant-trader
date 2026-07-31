@@ -577,6 +577,20 @@ async def main():
     # Use paper broker for risk checks, demo for actual orders
     broker = broker_demo
 
+    # SAFETY CHECK: real money account detected
+    if hasattr(broker, "is_real") and broker.is_real:
+        from quant_trader.execution.broker import FAPI_BASE as _FAPI_BASE_CHECK
+        log.warning("=" * 60)
+        log.warning("⚠️  REAL MONEY ACCOUNT DETECTED ⚠️")
+        log.warning("    Endpoint: %s", _FAPI_BASE_CHECK)
+        log.warning("    Hard cap: 10 USDT per position")
+        log.warning("    Daily loss limit must be <= 0.10 for safety")
+        cur_dll = float(settings.risk.daily_loss_limit)
+        if cur_dll > 0.10:
+            log.warning("    OVERRIDING daily_loss_limit %.2f -> 0.10 (safety)", cur_dll)
+            settings.risk.daily_loss_limit = 0.10
+        log.warning("=" * 60)
+
     # Start REST polling and watchlist immediately (don't wait for WS)
     # Event to signal positions_report task that a watchlist refresh completed
     refresh_event = asyncio.Event()
