@@ -29,7 +29,9 @@ def _sign(secret: str, params: dict) -> str:
 
 def _sign_and_send(method: str, path: str, api_key: str, secret: str,
                     params: dict, proxy: Optional[str] = None,
-                    base_url: str = FAPI_BASE) -> dict:
+                    base_url: str = None) -> dict:
+    if base_url is None:
+        base_url = FAPI_BASE  # use module-level (can be overridden at runtime)
     params["timestamp"] = int(_time.time() * 1000)
     params["recvWindow"] = 10000
     q = "&".join(f"{k}={v}" for k, v in sorted(params.items()))
@@ -91,7 +93,9 @@ class DemoBroker(BaseBroker):
     def _post(self, path: str, params: dict) -> dict:
         return _sign_and_send("POST", path, self.api_key, self.secret, params, self.proxy)
 
-    def _get(self, path: str, params: dict, base_url: str = FAPI_BASE) -> dict:
+    def _get(self, path: str, params: dict, base_url: str = None) -> dict:
+        if base_url is None:
+            base_url = FAPI_BASE
         return _sign_and_send("GET", path, self.api_key, self.secret, params, self.proxy, base_url)
 
     def _delete(self, path: str, params: dict) -> dict:
