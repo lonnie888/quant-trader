@@ -214,7 +214,7 @@ async def _refresh_watchlist(broker, settings, top_n: int = 30,
                 except Exception:
                     pass
         except Exception as ex:
-            log.warning("watchlist refresh failed: %s", ev)
+            log.warning("watchlist refresh failed: %s", ex)
         # Signal positions_report task that a refresh cycle is complete
         if refresh_event is not None:
             refresh_event.set()
