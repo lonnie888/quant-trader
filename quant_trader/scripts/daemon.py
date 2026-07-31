@@ -43,6 +43,30 @@ DEFAULT_WATCHLIST: list[str] = []
 
 # Module-level trade cooldown set (stop_loss prevention)
 _COOLDOWN_SYMBOLS: set = set()
+# Daily circuit breaker: when tripped, no new trades today
+_CIRCUIT_BROKEN_DATE: str = ""  # UTC date string when circuit broke
+
+def _check_circuit_breaker() -> bool:
+    """Check if daily loss limit has been tripped. Returns True if trading should stop."""
+    from quant_trader.execution.paper_ledger import (
+        get_all_positions, _today_realized_pnl
+    )
+    from datetime import datetime, timezone
+    global _CIRCUIT_BROKEN_DATE
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    if _CIRCUIT_BROKEN_DATE == today:
+        return True  # already tripped today
+    all_events = get_all_positions()
+    realized = _today_realized_pnl(all_events, today)
+    if realized <= -0.30:  # 30% leveraged loss
+        _CIRCUIT_BROKEN_DATE = today
+        log.warning("=" * 60)
+        log.warning("⚠️  CIRCUIT BREAKER TRIPPED: realized PnL %.2f%% <= -30%%", realized * 100)
+        log.warning("    All open positions will be force-closed")
+        log.warning("    No new trades today (%s)", today)
+        log.warning("=" * 60)
+        return True
+    return False
 
 async def _refresh_watchlist(broker, settings, top_n: int = 30,
                              refresh_event: asyncio.Event | None = None):
@@ -60,6 +84,16 @@ async def _refresh_watchlist(broker, settings, top_n: int = 30,
                 await asyncio.sleep(900)
                 continue
             log.info("watchlist refreshed: %d symbols", len(syms_ccxt))
+
+            # CIRCUIT BREAKER CHECK: skip the whole strategy loop if daily loss exceeded
+            if _check_circuit_breaker():
+                log.warning("circuit breaker active: skipping this watchlist cycle")
+                await _force_close_all_on_circuit(broker, positions_path)
+                # Skip card sending
+                if refresh_event is not None:
+                    refresh_event.set()
+                await asyncio.sleep(900)
+                continue
 
             # Run strategy on each symbol
             from quant_trader.strategy.generator.auto_strategy import generate_instances
@@ -199,6 +233,13 @@ async def _refresh_watchlist(broker, settings, top_n: int = 30,
                             log.info("✅ [watchlist] open %s @ %.6f id=%d", sym, entry_price, ev.id)
                         else:
                             pass  # enter failed, log already emitted by broker
+            # CIRCUIT BREAKER CHECK: if daily loss exceeded, skip new trades
+            if _check_circuit_breaker():
+                log.warning("circuit breaker active: skipping new entries this cycle")
+                # Force close all open positions
+                await _force_close_all_on_circuit(broker, positions_path)
+                if opened == 0:
+                    pass  # fall through to next cycle
             if opened > 0 or blocked > 0:
                 try:
                     from quant_trader.execution.notifier import FeishuNotifier, FeishuCardBuilder
@@ -495,6 +536,59 @@ async def _sync_demo_positions_on_startup(broker):
             log.info("startup sync: no orphan demo positions found")
     except Exception as ex:
         log.warning("startup sync error: %s", ex)
+
+
+async def _force_close_all_on_circuit(broker, positions_path):
+    """Force close all open positions when circuit breaker trips."""
+    from quant_trader.execution.paper_ledger import get_all_positions, close_position
+    from datetime import datetime, timezone
+    try:
+        all_events = get_all_positions(positions_path)
+        open_ids = set()
+        for ev in all_events:
+            if ev.get("status") == "open":
+                eid = int(ev["id"])
+                if eid not in open_ids:
+                    open_ids.add(eid)
+                    # Close in paper
+                    try:
+                        close_position(
+                            position_id=eid,
+                            exit_ts=datetime.now(timezone.utc).isoformat(),
+                            exit_price=float(ev.get("entry_price", 0)),
+                            exit_reason="circuit_breaker",
+                            log_path=positions_path,
+                        )
+                    except Exception as e:
+                        log.warning("circuit close paper failed id=%d: %s", eid, e)
+        # Also try to close on demo broker
+        try:
+            broker.exit(
+                position_id=0,  # dummy
+                exit_ts=datetime.now(timezone.utc).isoformat(),
+                exit_price=0.0,
+                exit_reason="circuit_breaker",
+                log_path=positions_path,
+            )
+        except Exception:
+            pass
+        # Try individual closes by iterating events
+        all_events_after = get_all_positions(positions_path)
+        for ev in all_events_after:
+            if ev.get("status") == "open":
+                try:
+                    broker.exit(
+                        position_id=int(ev["id"]),
+                        exit_ts=datetime.now(timezone.utc).isoformat(),
+                        exit_price=float(ev.get("entry_price", 0)),
+                        exit_reason="circuit_breaker",
+                        log_path=positions_path,
+                    )
+                except Exception as e:
+                    log.warning("circuit close demo failed id=%d: %s", int(ev["id"]), e)
+        log.info("circuit breaker: closed all open positions")
+    except Exception as e:
+        log.warning("circuit force close error: %s", e)
 
 
 async def main():

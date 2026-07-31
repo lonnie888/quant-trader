@@ -140,6 +140,19 @@ def _today_realized_pnl(events: list[dict], today: str) -> float:
     return total
 
 
+def check_daily_circuit_breaker(events: list[dict], today: str,
+                                  daily_loss_limit: float) -> tuple[bool, str, float]:
+    """Circuit breaker: stop trading if daily loss exceeds limit.
+
+    Returns:
+        (tripped, reason, current_loss)
+    """
+    realized = _today_realized_pnl(events, today)
+    if realized <= -abs(daily_loss_limit):
+        return True, f"realized_loss_{abs(realized)*100:.1f}%", realized
+    return False, "", realized
+
+
 def evaluate_risk(
     events: list[dict],
     *,
