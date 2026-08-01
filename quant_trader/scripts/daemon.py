@@ -109,6 +109,9 @@ async def _refresh_watchlist(broker, settings, top_n: int = 30,
 
             instances = generate_instances("config/strategies.yaml")
             positions_path = Path("reports/paper/positions.jsonl")
+            # Global reference for circuit breaker
+            global _POSITIONS_PATH
+            _POSITIONS_PATH = positions_path
             risk_cfg = settings.risk
             risk_check = {
                 "initial_capital": float(settings.backtest.initial_capital),
@@ -544,7 +547,9 @@ async def _sync_demo_positions_on_startup(broker):
         log.warning("startup sync error: %s", ex)
 
 
-async def _force_close_all_on_circuit(broker, positions_path):
+async def _force_close_all_on_circuit(broker, positions_path=None):
+    if positions_path is None:
+        positions_path = _POSITIONS_PATH or Path("reports/paper/positions.jsonl")
     """Force close all open positions when circuit breaker trips."""
     from quant_trader.execution.paper_ledger import get_all_positions, close_position
     from datetime import datetime, timezone
@@ -722,6 +727,10 @@ async def main():
     # 实盘部署到其他服务器后再启用 WS。
     log.info("WebSocket disabled (incompatible with proxy in this environment).")
     log.info("REST polling (15s SL/TP) + watchlist (15min kline) active.")
+
+    # Reset circuit breaker on startup (don't count historical losses)
+    _CIRCUIT_BROKEN_DATE = ""
+    log.info("circuit breaker reset on startup")
 
     # Sync demo with paper ledger on startup (close orphaned positions)
     await _sync_demo_positions_on_startup(broker)
