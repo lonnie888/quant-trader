@@ -7,7 +7,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 
-from ...execution.paper_ledger import get_all_positions, close_position
+from ...execution.paper_ledger import get_all_positions
 
 log = logging.getLogger(__name__)
 
@@ -68,16 +68,27 @@ class SLTPWatch:
                 continue
 
             exit_ts = datetime.now(timezone.utc).isoformat()
-            closed = close_position(
-                position_id=pos_id,
-                exit_ts=exit_ts,
-                exit_price=exit_price or mark_price,
-                exit_reason=exit_reason,
-            )
-            if closed:
-                log.info("closed id=%d %s @ %.6f reason=%s", pos_id, symbol, exit_price, exit_reason)
-                if self.on_close is not None:
-                    try:
-                        self.on_close(closed)
-                    except Exception as ex:
-                        log.exception("on_close error: %s", ex)
+            # Build closed dict for callback (actual close_position() is called by the callback via broker.exit())
+            import json
+            closed = {
+                "id": pos_id,
+                "status": "closed",
+                "symbol": pos.get("symbol", symbol),
+                "strategy": pos.get("strategy", ""),
+                "params": pos.get("params", {}),
+                "open_day": pos.get("open_day", ""),
+                "entry_ts": pos.get("entry_ts", ""),
+                "entry_price": entry,
+                "sl_price": pos.get("sl_price", 0),
+                "tp_price": pos.get("tp_price"),
+                "leverage": pos.get("leverage", 3.0),
+                "exit_ts": exit_ts,
+                "exit_price": exit_price or mark_price,
+                "exit_reason": exit_reason,
+            }
+            log.info("closed id=%d %s @ %.6f reason=%s", pos_id, symbol, exit_price, exit_reason)
+            if self.on_close is not None:
+                try:
+                    self.on_close(closed)
+                except Exception as ex:
+                    log.exception("on_close error: %s", ex)
