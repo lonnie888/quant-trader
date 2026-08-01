@@ -130,7 +130,31 @@ class DemoBroker(BaseBroker):
             min_qty = max(int(5.0 / entry_price), 1)
             qty = max(raw_qty, min_qty)
 
-            # Fetch exchange info to respect LOT_SIZE/MARKET_LOT_SIZE
+            # Fetch exchange info to respect LOT_SIZE/MARKET_LOT_SIZE/MIN_NOTIONAL
+            try:
+                ei = _requests.get(
+                    f"{FAPI_BASE}/exchangeInfo",
+                    params={"symbol": api_sym},
+                    proxies={"http": self.proxy, "https": self.proxy} if self.proxy else None,
+                    timeout=5,
+                ).json()
+                for sym_info in ei.get("symbols", []):
+                    if sym_info["symbol"] == api_sym:
+                        for f in sym_info.get("filters", []):
+                            if f["filterType"] == "MARKET_LOT_SIZE":
+                                max_qty = int(float(f["maxQty"]))
+                                qty = min(qty, max_qty)
+                            if f["filterType"] == "LOT_SIZE":
+                                step = int(float(f["stepSize"]))
+                                if step > 0:
+                                    qty = (qty // step) * step  # round down to step
+                            if f["filterType"] == "MIN_NOTIONAL":
+                                min_notional = float(f["notional"])
+                                # Ensure qty meets min notional
+                                if qty * entry_price < min_notional:
+                                    qty = int(min_notional / entry_price) + 1
+            except Exception:
+                pass  # fallback: use raw qty
             try:
                 ei = _requests.get(
                     f"{FAPI_BASE}/exchangeInfo",
