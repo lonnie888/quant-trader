@@ -64,10 +64,10 @@ def _check_circuit_breaker(settings=None) -> bool:
         return True  # already tripped today
     all_events = get_all_positions()
     realized = _today_realized_pnl(all_events, today)
-    if realized <= -0.30:  # 30% leveraged loss
+    if realized <= -0.60:  # 60% leveraged loss (allow ~2 SLs before circuit breaker)
         _CIRCUIT_BROKEN_DATE = today
         log.warning("=" * 60)
-        log.warning("⚠️  CIRCUIT BREAKER TRIPPED: realized PnL %.2f%% <= -30%%", realized * 100)
+        log.warning("⚠️  CIRCUIT BREAKER TRIPPED: realized PnL %.2f%% <= -60%%", realized * 100)
         log.warning("    All open positions will be force-closed")
         log.warning("    No new trades today (%s)", today)
         log.warning("=" * 60)
