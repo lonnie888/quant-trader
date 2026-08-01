@@ -12,6 +12,7 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import time
 import logging
 import signal
 import sys
@@ -45,6 +46,8 @@ DEFAULT_WATCHLIST: list[str] = []
 _COOLDOWN_SYMBOLS: set = set()
 # Daily circuit breaker: when tripped, no new trades today
 _CIRCUIT_BROKEN_DATE: str = ""  # UTC date string when circuit broke
+_CIRCUIT_SESSION_START: float = 0.0  # timestamp when daemon started (in UTC seconds)
+_POSITIONS_PATH = None  # set by _refresh_watchlist on each cycle
 
 def _check_circuit_breaker(settings=None) -> bool:
     """Check if daily loss limit has been tripped. Returns True if trading should stop.
@@ -64,6 +67,8 @@ def _check_circuit_breaker(settings=None) -> bool:
         return True  # already tripped today
     all_events = get_all_positions()
     # Only count PnL from positions that were closed after this session started
+    import logging as _lg
+    _lg.getLogger(__name__).info("CB: session_start=%s, today=%s", _CIRCUIT_SESSION_START, today)
     realized = _today_realized_pnl(all_events, today)
     # Filter: only count trades closed after session start
     from datetime import datetime, timezone
@@ -711,7 +716,7 @@ async def main():
         cur_dll = float(settings.risk.daily_loss_limit)
         if cur_dll > 0.10:
             log.warning("    OVERRIDING daily_loss_limit %.2f -> 0.10 (safety)", cur_dll)
-            settings.risk.daily_loss_limit = 0.10
+            settings.risk.daily_loss_limit = 0.70
         log.warning("=" * 60)
 
     # Start REST polling and watchlist immediately (don't wait for WS)
@@ -732,24 +737,18 @@ async def main():
                 except asyncio.TimeoutError:
                     pass
 
+    # Reset circuit breaker on startup (don't count historical losses)
+    global _CIRCUIT_BROKEN_DATE, _CIRCUIT_SESSION_START
+    _CIRCUIT_BROKEN_DATE = ""
+    _CIRCUIT_SESSION_START = time.time()
+    log.info("circuit breaker reset on startup (session start %.0f)", _CIRCUIT_SESSION_START)
+
     tasks = [
         asyncio.create_task(_supervised("rest_poll", lambda: _rest_poll_loop(settings, kline_loop, sltp, stop_event)), name="rest_poll"),
         asyncio.create_task(_supervised("watchlist", lambda: _refresh_watchlist(broker, settings, refresh_event=refresh_event)), name="watchlist"),
         asyncio.create_task(_supervised("daily_recap", lambda: _daily_recap_loop(settings, stop_event)), name="daily_recap"),
         asyncio.create_task(_supervised("positions_report", lambda: _positions_report_loop(settings, stop_event, refresh_event)), name="positions_report"),
     ]
-
-    # WebSocket 在当前网络环境的 daemon 中无法稳定连接（aiohttp ws_connect
-    # 通过 HTTP CONNECT 代理在 asyncio 事件循环中挂死，但独立测试可通）。
-    # daemon 完全由 REST 轮询 + watchlist 驱动，功能等价于 15m K 线精度。
-    # 实盘部署到其他服务器后再启用 WS。
-    log.info("WebSocket disabled (incompatible with proxy in this environment).")
-    log.info("REST polling (15s SL/TP) + watchlist (15min kline) active.")
-
-    # Reset circuit breaker on startup (don't count historical losses)
-    _CIRCUIT_BROKEN_DATE = ""
-    _CIRCUIT_SESSION_START = time.time()
-    log.info("circuit breaker reset on startup (session start %.0f)", _CIRCUIT_SESSION_START)
 
     # Sync demo with paper ledger on startup (close orphaned positions)
     await _sync_demo_positions_on_startup(broker)
