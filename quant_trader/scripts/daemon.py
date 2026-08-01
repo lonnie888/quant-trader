@@ -46,13 +46,19 @@ _COOLDOWN_SYMBOLS: set = set()
 # Daily circuit breaker: when tripped, no new trades today
 _CIRCUIT_BROKEN_DATE: str = ""  # UTC date string when circuit broke
 
-def _check_circuit_breaker() -> bool:
-    """Check if daily loss limit has been tripped. Returns True if trading should stop."""
+def _check_circuit_breaker(settings=None) -> bool:
+    """Check if daily loss limit has been tripped. Returns True if trading should stop.
+    Only active in demo (real money) mode."""
     from quant_trader.execution.paper_ledger import (
         get_all_positions, _today_realized_pnl
     )
     from datetime import datetime, timezone
     global _CIRCUIT_BROKEN_DATE
+    # Only activate circuit breaker in demo (real money) mode
+    if settings is not None:
+        mode = getattr(settings.demo_trading, "mode", "paper")
+        if mode != "demo":
+            return False  # paper mode, no circuit breaker
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     if _CIRCUIT_BROKEN_DATE == today:
         return True  # already tripped today
@@ -86,7 +92,7 @@ async def _refresh_watchlist(broker, settings, top_n: int = 30,
             log.info("watchlist refreshed: %d symbols", len(syms_ccxt))
 
             # CIRCUIT BREAKER CHECK: skip the whole strategy loop if daily loss exceeded
-            if _check_circuit_breaker():
+            if _check_circuit_breaker(settings):
                 log.warning("circuit breaker active: skipping this watchlist cycle")
                 await _force_close_all_on_circuit(broker, positions_path)
                 # Skip card sending
@@ -234,7 +240,7 @@ async def _refresh_watchlist(broker, settings, top_n: int = 30,
                         else:
                             pass  # enter failed, log already emitted by broker
             # CIRCUIT BREAKER CHECK: if daily loss exceeded, skip new trades
-            if _check_circuit_breaker():
+            if _check_circuit_breaker(settings):
                 log.warning("circuit breaker active: skipping new entries this cycle")
                 # Force close all open positions
                 await _force_close_all_on_circuit(broker, positions_path)
