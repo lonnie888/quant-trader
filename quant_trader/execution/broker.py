@@ -112,10 +112,10 @@ class DemoBroker(BaseBroker):
             acct = self._get("account", {}, base_url=FAPI_BASE_V2)
             free = float(acct.get("availableBalance", "0") or 0)
             # SAFETY CAP: max margin per position
-            # - Real account: 30% of balance per position, hard cap 10 USDT
+            # - Real account: fixed 3 USDT per position (≈30% of 10U total)
             # - Demo: keep 1000 USDT for proper testing
             if self.is_real:
-                margin = min(free * 0.30, 10.0)
+                margin = 3.0
             else:
                 margin = 1000.0
             if free < margin:
