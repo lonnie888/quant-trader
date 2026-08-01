@@ -63,7 +63,25 @@ def _check_circuit_breaker(settings=None) -> bool:
     if _CIRCUIT_BROKEN_DATE == today:
         return True  # already tripped today
     all_events = get_all_positions()
+    # Only count PnL from positions that were closed after this session started
     realized = _today_realized_pnl(all_events, today)
+    # Filter: only count trades closed after session start
+    from datetime import datetime, timezone
+    session_start_dt = datetime.fromtimestamp(_CIRCUIT_SESSION_START, tz=timezone.utc) if _CIRCUIT_SESSION_START else None
+    session_realized = 0.0
+    for ev in all_events:
+        if ev.get("status") != "closed": continue
+        exit_ts = ev.get("exit_ts", "")
+        if not exit_ts: continue
+        try:
+            exit_dt = datetime.fromisoformat(exit_ts.replace("Z", "+00:00"))
+            if session_start_dt and exit_dt < session_start_dt: continue
+        except: continue
+        d = exit_dt.strftime("%Y-%m-%d")
+        if d != today: continue
+        pnl = ev.get("pnl_pct_lev", 0.0) or 0.0
+        session_realized += pnl
+    realized = session_realized
     if realized <= -0.60:  # 60% leveraged loss (allow ~2 SLs before circuit breaker)
         _CIRCUIT_BROKEN_DATE = today
         log.warning("=" * 60)
@@ -730,7 +748,8 @@ async def main():
 
     # Reset circuit breaker on startup (don't count historical losses)
     _CIRCUIT_BROKEN_DATE = ""
-    log.info("circuit breaker reset on startup")
+    _CIRCUIT_SESSION_START = time.time()
+    log.info("circuit breaker reset on startup (session start %.0f)", _CIRCUIT_SESSION_START)
 
     # Sync demo with paper ledger on startup (close orphaned positions)
     await _sync_demo_positions_on_startup(broker)
