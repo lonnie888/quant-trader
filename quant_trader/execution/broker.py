@@ -112,10 +112,22 @@ class DemoBroker(BaseBroker):
             acct = self._get("account", {}, base_url=FAPI_BASE_V2)
             free = float(acct.get("availableBalance", "0") or 0)
             # SAFETY CAP: max margin per position
-            # - Real account: fixed 3 USDT per position (≈30% of 10U total)
+            # - Real account: 30% of last equity snapshot (saved when no positions)
             # - Demo: keep 1000 USDT for proper testing
             if self.is_real:
-                margin = 3.0
+                # Read equity snapshot (saved when last position was closed)
+                try:
+                    import json
+                    snap_path = Path("reports/paper/equity.json")
+                    if snap_path.exists():
+                        snap = json.loads(snap_path.read_text())
+                        total_equity = float(snap.get("totalWalletBalance", free))
+                    else:
+                        total_equity = free
+                    margin = max(total_equity * 0.30, 3.0)  # 30% of equity, min 3 USDT
+                    margin = min(margin, total_equity * 0.50)  # never more than 50%
+                except Exception:
+                    margin = 3.0  # fallback
             else:
                 margin = 1000.0
             if free < margin:

@@ -409,6 +409,7 @@ async def _positions_report_loop(settings, stop_event, watchlist_event: asyncio.
             )
             if len(open_pos) == 0:
                 log.info("positions report skipped: 0 open positions")
+                _save_equity_snapshot(broker)
                 return
             from quant_trader.execution.notifier import FeishuNotifier
             fw = getattr(settings.notify, "feishu_webhook", None)
@@ -495,6 +496,32 @@ async def _rest_poll_loop(settings, kline_loop, sltp, stop_event):
         except Exception as ex:
             log.warning("rest poll error: %s", ex)
         await asyncio.sleep(15)
+
+
+def _save_equity_snapshot(broker):
+    """Save total equity snapshot when no positions are open."""
+    try:
+        import json, hmac, hashlib, requests as _req, time as _t
+        from pathlib import Path
+        from quant_trader.execution.broker import FAPI_BASE_V2, DemoBroker
+        if not isinstance(broker, DemoBroker):
+            return
+        ts = int(_t.time() * 1000)
+        params = {"timestamp": str(ts), "recvWindow": "10000"}
+        q = "&".join(f"{k}={v}" for k,v in sorted(params.items()))
+        sig = hmac.new(broker.secret.encode(), q.encode(), hashlib.sha256).hexdigest()
+        proxy = broker.proxy
+        proxies = {"http": proxy, "https": proxy} if proxy else None
+        r = _req.get(f"{FAPI_BASE_V2}/account?{q}&signature={sig}",
+                     headers={"X-MBX-APIKEY": broker.api_key}, proxies=proxies, timeout=10)
+        if r.status_code == 200:
+            acct = r.json()
+            total = float(acct.get("totalWalletBalance", 0))
+            snap = {"totalWalletBalance": total, "timestamp": _t.time(), "date": _t.strftime("%Y-%m-%d %H:%M:%S", _t.gmtime())}
+            Path("reports/paper/equity.json").write_text(json.dumps(snap, indent=2))
+            log.info("equity snapshot saved: %.2f USDT", total)
+    except Exception as ex:
+        log.warning("equity snapshot failed: %s", ex)
 
 
 async def _sync_demo_positions_on_startup(broker):
@@ -662,6 +689,13 @@ async def main():
             )
             feishu.send_card(card)
             log.info("feishu close notify: %s reason=%s pnl=%+.2f%%", sym, reason, pnl*100)
+            # 检查是否还有持仓，没有就保存权益快照
+            try:
+                from quant_trader.execution.paper_ledger import get_open_positions
+                if len(get_open_positions(Path("reports/paper/positions.jsonl"))) == 0:
+                    _save_equity_snapshot(broker)
+            except Exception:
+                pass
             # 再关 demo 仓位（单独 try，失败不影响通知）
             try:
                 broker.exit(
