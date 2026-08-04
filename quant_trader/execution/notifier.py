@@ -45,10 +45,14 @@ class FeishuNotifier:
         try:
             r = requests.post(self.webhook_url, json=card, timeout=10)
             r.raise_for_status()
-            log.info("feishu card sent")
+            resp = r.json()
+            if resp.get("StatusCode") != 0 or resp.get("code") != 0:
+                log.warning("feishu card api error: %s (webhook=%s...)", resp, self.webhook_url[:50])
+            else:
+                log.info("feishu card sent (webhook=%s...)", self.webhook_url[:50])
             return True
         except Exception as e:
-            log.warning("feishu card send failed: %s", e)
+            log.warning("feishu card send failed: %s (webhook=%s...)", e, self.webhook_url[:50] if self.webhook_url else "None")
             return False
 
 

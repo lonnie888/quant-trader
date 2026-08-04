@@ -296,7 +296,7 @@ async def _refresh_watchlist(broker, settings, top_n: int = 30,
         await asyncio.sleep(900)
 
 
-async def _positions_report_loop(settings, stop_event, watchlist_event: asyncio.Event):
+async def _positions_report_loop(settings, stop_event, watchlist_event: asyncio.Event, broker=None):
     """Send positions check card to Feishu when watchlist refresh completes."""
     from datetime import datetime, timezone, timedelta
     from quant_trader.execution.notifier import FeishuNotifier, FeishuCardBuilder
@@ -410,7 +410,7 @@ async def _positions_report_loop(settings, stop_event, watchlist_event: asyncio.
             if len(open_pos) == 0:
                 log.info("positions report skipped: 0 open positions")
                 _save_equity_snapshot(broker)
-                return
+                continue
             from quant_trader.execution.notifier import FeishuNotifier
             fw = getattr(settings.notify, "feishu_webhook", None)
             FeishuNotifier(webhook_url=fw).send_card(card)
@@ -468,7 +468,7 @@ async def _rest_poll_loop(settings, kline_loop, sltp, stop_event):
                     r.raise_for_status()
                     tickers = await r.json()
         except Exception as ex:
-            log.warning("rest poll price fetch failed: %s", ex)
+            log.warning("rest poll price fetch failed: %s [%s]", ex, type(ex).__name__)
             return
 
         price_map = {p["symbol"]: float(p["price"]) for p in tickers}
@@ -781,7 +781,7 @@ async def main():
         asyncio.create_task(_supervised("rest_poll", lambda: _rest_poll_loop(settings, kline_loop, sltp, stop_event)), name="rest_poll"),
         asyncio.create_task(_supervised("watchlist", lambda: _refresh_watchlist(broker, settings, refresh_event=refresh_event)), name="watchlist"),
         asyncio.create_task(_supervised("daily_recap", lambda: _daily_recap_loop(settings, stop_event)), name="daily_recap"),
-        asyncio.create_task(_supervised("positions_report", lambda: _positions_report_loop(settings, stop_event, refresh_event)), name="positions_report"),
+        asyncio.create_task(_supervised("positions_report", lambda: _positions_report_loop(settings, stop_event, refresh_event, broker)), name="positions_report"),
     ]
 
     # Sync demo with paper ledger on startup (close orphaned positions)
