@@ -139,8 +139,23 @@ class DemoBroker(BaseBroker):
                     log_path=log_path, risk_check=risk_check,
                 )
             raw_qty = int(margin * leverage / entry_price)
+            # 如果raw_qty为0,检查是否买得起1个最小单位
             min_qty = max(int(5.0 / entry_price), 1)
-            qty = max(raw_qty, min_qty)
+            if raw_qty < 1:
+                # 检查1个最小单位的保证金是否足够
+                one_unit_margin = 1.0 * entry_price / leverage
+                if one_unit_margin <= free:
+                    qty = min_qty
+                else:
+                    log.warning("跳过 %s: 1个单位需要 %.2f USDT保证金, 可用 %.2f USDT", api_sym, one_unit_margin, free)
+                    return self._paper.enter(
+                        symbol=symbol, strategy=strategy, params=params,
+                        entry_ts=entry_ts, entry_price=entry_price,
+                        leverage=leverage, open_day=open_day,
+                        log_path=log_path, risk_check=risk_check,
+                    )
+            else:
+                qty = raw_qty
 
             # Fetch exchange info to respect LOT_SIZE/MARKET_LOT_SIZE/MIN_NOTIONAL
             try:
