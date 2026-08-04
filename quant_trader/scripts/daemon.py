@@ -678,14 +678,23 @@ async def main():
             # 先发飞书通知（即使 broker.exit 失败也要通知）
             entry = float(ev.get("entry_price", 0))
             exit_ = float(ev.get("exit_price", 0))
-            pnl = float(ev.get("pnl_pct_lev", 0) or 0)
+            lev = float(ev.get("leverage", 3.0))
+            # 计算PnL（如果dict里没有预计算的值）
+            pnl_raw = ev.get("pnl_pct_lev")
+            if pnl_raw is not None:
+                pnl = float(pnl_raw)
+            else:
+                pnl = (exit_ - entry) / entry * lev if entry > 0 else 0.0
+            # 获取最大浮盈/浮亏（如果sltp tracking了）
+            max_fav = float(ev.get("max_fav_pct", 0) or 0)
+            max_adv = float(ev.get("max_adv_pct", 0) or 0)
             reason = ev.get("exit_reason", "")
             sym = ev.get("symbol", "")
             card = FeishuCardBuilder.make_position_close(
                 symbol=sym, exit_reason=reason,
                 entry_price=entry, exit_price=exit_,
                 pnl_pct_lev=pnl,
-                max_fav_pct=0.0, max_adv_pct=0.0,
+                max_fav_pct=max_fav, max_adv_pct=max_adv,
             )
             feishu.send_card(card)
             log.info("feishu close notify: %s reason=%s pnl=%+.2f%%", sym, reason, pnl*100)

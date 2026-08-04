@@ -17,6 +17,7 @@ class SLTPWatch:
 
     def __init__(self, on_close=None):
         self.on_close = on_close
+        self._price_tracker: dict[int, dict] = {}  # pos_id -> {"min": price, "max": price}
 
     def on_mark(self, symbol: str, mark_price: float):
         # Always re-read open positions from ledger (avoids stale in-memory state).
@@ -25,6 +26,10 @@ class SLTPWatch:
         for ev in all_events:
             if ev.get("status") in ("closed", "blocked"):
                 closed_ids.add(int(ev["id"]))
+        # Clean up price tracker for closed positions
+        for pid in list(self._price_tracker.keys()):
+            if pid in closed_ids:
+                del self._price_tracker[pid]
         live_open = [
             ev for ev in all_events
             if ev.get("status") == "open" and int(ev["id"]) not in closed_ids
@@ -39,9 +44,18 @@ class SLTPWatch:
                 tp = pos.get("tp_price")
                 tp = float(tp) if tp is not None else None
                 hold_bars = int(pos["params"].get("hold_bars", 24))
-            except (KeyError, TypeError, ValueError) as ev:
+            except (KeyError, TypeError, ValueError) as ex:
                 log.warning("malformed position id=%d: %s", pos_id, ex)
                 continue
+
+            # Track max favorable / adverse price movement
+            if pos_id not in self._price_tracker:
+                self._price_tracker[pos_id] = {"min": mark_price, "max": mark_price}
+            tracker = self._price_tracker[pos_id]
+            if mark_price < tracker["min"]:
+                tracker["min"] = mark_price
+            if mark_price > tracker["max"]:
+                tracker["max"] = mark_price
 
             exit_reason = None
             exit_price = None
@@ -67,9 +81,17 @@ class SLTPWatch:
             if exit_reason is None:
                 continue
 
+            # Compute max favorable/adverse from tracked prices
+            max_fav = 0.0
+            max_adv = 0.0
+            if entry > 0 and pos_id in self._price_tracker:
+                tr = self._price_tracker[pos_id]
+                max_fav = (tr["max"] - entry) / entry
+                max_adv = (tr["min"] - entry) / entry
+                del self._price_tracker[pos_id]
+
             exit_ts = datetime.now(timezone.utc).isoformat()
             # Build closed dict for callback (actual close_position() is called by the callback via broker.exit())
-            import json
             closed = {
                 "id": pos_id,
                 "status": "closed",
@@ -85,6 +107,8 @@ class SLTPWatch:
                 "exit_ts": exit_ts,
                 "exit_price": exit_price or mark_price,
                 "exit_reason": exit_reason,
+                "max_fav_pct": max_fav,
+                "max_adv_pct": max_adv,
             }
             log.info("closed id=%d %s @ %.6f reason=%s", pos_id, symbol, exit_price, exit_reason)
             if self.on_close is not None:
