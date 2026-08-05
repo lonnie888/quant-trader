@@ -118,7 +118,23 @@ async def _refresh_watchlist(broker, settings, top_n: int = 30,
             if _check_circuit_breaker(settings):
                 log.warning("circuit breaker active: skipping this watchlist cycle")
                 await _force_close_all_on_circuit(broker, positions_path)
-                # Skip card sending
+                # Still send a feishu card to notify user
+                try:
+                    from quant_trader.execution.notifier import FeishuNotifier, FeishuCardBuilder
+                    fw = getattr(settings.notify, "feishu_webhook", None)
+                    feishu = FeishuNotifier(webhook_url=fw)
+                    gainer_pairs = [(g.symbol.split("/")[0].split(":")[0], float(g.pct_change_24h)) for g in gainers]
+                    card = FeishuCardBuilder.make_daily_summary(
+                        as_of=datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+                        gainers=gainer_pairs,
+                        accepted=0, blocked=0,
+                        open_pos=0,
+                        opened_symbols=[],
+                        blocked_list=[("⚠️ 熔断器", "今日亏损达限，已暂停交易")],
+                    )
+                    feishu.send_card(card)
+                except Exception:
+                    pass
                 if refresh_event is not None:
                     refresh_event.set()
                 await asyncio.sleep(900)
