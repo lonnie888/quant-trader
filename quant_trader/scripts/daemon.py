@@ -242,6 +242,13 @@ async def _refresh_watchlist(broker, settings, top_n: int = 30,
                         entry_price = float(df.iloc[-1]["close"])
                         now_ts = datetime.now(timezone.utc).isoformat()
                         all_events = get_all_positions(positions_path)
+                        # 检查是否已有同币种持仓（防止重复开单）
+                        from quant_trader.execution.paper_ledger import _has_open
+                        if _has_open(all_events, sym):
+                            log.info("跳过 %s: 已有同币种持仓", sym)
+                            blocked += 1
+                            blocked_list.append((sym.split("/")[0].split(":")[0], "已有持仓"))
+                            continue
                         allowed, reason = evaluate_risk(all_events, **risk_check)
                         if not allowed:
                             blocked += 1
