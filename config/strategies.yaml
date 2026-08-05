@@ -14,7 +14,7 @@ strategies:
       vol_recover: [1.0]
       trigger_pct: [0.0]
       ema_period: [12]
-      hold_bars: [24]
+      hold_bars: [48]
       cooldown: [12]
       stop_loss_pct: [0.12]
       take_profit_pct: [0.30]
