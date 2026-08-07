@@ -49,12 +49,25 @@ def save_snapshot(api_key: str, secret: str, proxy: Optional[str] = None) -> dic
 
     # Parse open positions
     positions = []
+    # Fetch current ticker prices for mark price
+    try:
+        ticker_url = "https://fapi.binance.com/fapi/v1/ticker/price"
+        proxies2 = {"http": proxy, "https": proxy} if proxy else None
+        tr = requests.get(ticker_url, proxies=proxies2, timeout=10)
+        ticker_map = {}
+        if tr.status_code == 200:
+            for t in tr.json():
+                ticker_map[t["symbol"]] = float(t["price"])
+    except Exception:
+        ticker_map = {}
+
     for p in acct.get("positions", []):
         amt = float(p.get("positionAmt", 0) or 0)
         if abs(amt) < 0.001:
             continue
         entry = float(p.get("entryPrice", 0) or 0)
-        mark = float(p.get("markPrice", 0) or 0)
+        sym = p["symbol"]
+        mark = ticker_map.get(sym, 0) or float(p.get("markPrice", 0) or 0)
         upnl = float(p.get("unrealizedProfit", 0) or 0)
         lev = float(p.get("leverage", 5) or 5)
         margin = abs(amt) * entry / lev if entry > 0 else 0
@@ -119,12 +132,20 @@ def get_realtime_summary(api_key: str, secret: str, proxy: Optional[str] = None)
     unrealized = float(acct.get("unrealizedProfit", 0) or 0)
 
     positions = []
+    try:
+        tr = requests.get("https://fapi.binance.com/fapi/v1/ticker/price",
+                          proxies={"http": proxy, "https": proxy} if proxy else None, timeout=10)
+        ticker_map = {t["symbol"]: float(t["price"]) for t in tr.json()} if tr.status_code == 200 else {}
+    except Exception:
+        ticker_map = {}
+
     for p in acct.get("positions", []):
         amt = float(p.get("positionAmt", 0) or 0)
         if abs(amt) < 0.001:
             continue
         entry = float(p.get("entryPrice", 0) or 0)
-        mark = float(p.get("markPrice", 0) or 0)
+        sym = p["symbol"]
+        mark = ticker_map.get(sym, 0) or float(p.get("markPrice", 0) or 0)
         upnl = float(p.get("unrealizedProfit", 0) or 0)
         lev = float(p.get("leverage", 5) or 5)
         margin = abs(amt) * entry / lev if entry > 0 else 0
@@ -132,6 +153,7 @@ def get_realtime_summary(api_key: str, secret: str, proxy: Optional[str] = None)
         positions.append({
             "symbol": p["symbol"],
             "qty": abs(amt),
+            "side": "LONG" if float(p["positionAmt"]) > 0 else "SHORT",
             "entry": entry,
             "mark": mark,
             "margin": round(margin, 2),
