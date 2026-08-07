@@ -342,6 +342,21 @@ class DemoBroker(BaseBroker):
             leverage=leverage, open_day=open_day,
             log_path=log_path, risk_check=risk_check,
         )
+        # 实盘已成功开仓，如果 paper 账本因为风控阻挡了，强制记录 open（保持账本与实盘同步）
+        if ev is not None and ev.status != "open" and self.is_real:
+            try:
+                from quant_trader.execution.paper_ledger import open_position
+                ev2 = open_position(
+                    symbol=symbol, strategy=strategy, params=params,
+                    entry_ts=entry_ts, entry_price=actual_price,
+                    leverage=leverage, open_day=open_day,
+                    log_path=log_path,
+                )
+                if ev2 is not None:
+                    ev = ev2
+                    log.info("paper force open %s (real account has this position)", api_sym)
+            except Exception:
+                pass
         return ev
 
     def exit(self, *, position_id: int, exit_ts: str,
