@@ -102,11 +102,15 @@ class FeishuCardBuilder:
                 if isinstance(rb, (int, float)) and rb <= 0:
                     rb_str = "-"
                 else:
-                    rb_str = str(rb)
+                    mins = int(rb) * 15
+                    if mins >= 60:
+                        rb_str = f"{mins//60}小时{mins%60}分"
+                    else:
+                        rb_str = f"{mins}分钟"
                 content = (
                     f"{dot} **{sym_short}**\n"
                     f"入场 `{r['entry_price']:.6f}`  当前 `{r['last_close']:.6f}`\n"
-                    f"收益: **{pct:+.2f}%**  |  剩余: {rb_str} bars"
+                    f"收益: **{pct:+.2f}%**  |  剩余: {rb_str}"
                 )
             elements.append({
                 "tag": "div",
