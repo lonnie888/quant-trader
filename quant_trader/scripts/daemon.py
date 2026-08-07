@@ -316,6 +316,12 @@ async def _refresh_watchlist(broker, settings, top_n: int = 30,
                         prev = v
                     if s[-1] == 1 and last_entry >= 0:
                         bars_since = len(s) - 1 - last_entry
+                        # 要求信号刚触发（最近3根K线内从0变1），避免持仓延续信号在价格远离入场点后误开仓
+                        if bars_since > 2:
+                            log.info("跳过 %s: 信号滞后 %d 根K线(追高防护)", sym, bars_since)
+                            blocked += 1
+                            blocked_list.append((sym.split("/")[0].split(":")[0], f"信号滞后{bars_since}根"))
+                            continue
                                                 # 额外检查：最近12根K线内必须有 ≥13% 的泵
                         # 防止"持仓延续"信号在下跌趋势中误开仓
                         pump_window = 12
