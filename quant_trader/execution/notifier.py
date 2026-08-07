@@ -195,18 +195,18 @@ class FeishuCardBuilder:
             })
 
         if blocked_list:
-                    elements.append({"tag": "hr"})
-                    # 过滤掉"无泵"的阻挡（正常信号过滤，不是风控）
-                    filtered = [(s, r) for s, r in blocked_list if not r.startswith("无泵")]
-                    if filtered:
-                        lines = [f"`{s}` {r}" for s, r in filtered[:15]]
-                        if len(filtered) > 15:
-                            lines.append(f"... +{len(filtered) - 15} more")
-                        elements.append({
-                            "tag": "div",
-                            "text": {"tag": "lark_md",
-                                     "content": "**风控阻挡明细**\\n" + "\n".join(lines)},
-                        })
+            elements.append({"tag": "hr"})
+            # 过滤掉"无泵"的阻挡（正常信号过滤，不是风控）
+            filtered = [(s, r) for s, r in blocked_list if not r.startswith("无泵")]
+            if filtered:
+                lines = [f"`{s}` {r}" for s, r in filtered[:15]]
+                if len(filtered) > 15:
+                    lines.append(f"... +{len(filtered) - 15} more")
+                elements.append({
+                    "tag": "div",
+                    "text": {"tag": "lark_md",
+                             "content": "**风控阻挡明细**\n" + "\n".join(lines)},
+                })
 
         elements.append({
             "tag": "note",
