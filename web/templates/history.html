@@ -2,7 +2,7 @@
 {% block title %}历史 - Quant Trader{% endblock %}
 
 {% block content %}
-<h1 class="text-xl sm:text-2xl font-bold mb-4 sm:mb-6">交易历史</h1>
+<h1 class="text-xl sm:text-2xl font-bold mb-4 sm:mb-6">交易历史（真实账户）</h1>
 
 <!-- 筛选 -->
 <div class="card mb-4 sm:mb-6">
@@ -12,13 +12,14 @@
             <input type="text" id="filter-symbol" placeholder="全部" class="w-full sm:w-[120px]" style="box-sizing:border-box;">
         </div>
         <div class="w-full sm:w-auto">
-            <label class="label block mb-1">退出原因</label>
-            <select id="filter-reason" class="w-full sm:w-[140px]">
-                <option value="">全部</option>
-                <option value="stop_loss">止损</option>
-                <option value="take_profit">止盈</option>
-                <option value="time">时间到期</option>
-                <option value="manual">手动</option>
+            <label class="label block mb-1">时间范围</label>
+            <select id="filter-days" class="w-full sm:w-[140px]">
+                <option value="1">最近 1 天</option>
+                <option value="3">最近 3 天</option>
+                <option value="7" selected>最近 7 天</option>
+                <option value="14">最近 14 天</option>
+                <option value="30">最近 30 天</option>
+                <option value="90">最近 90 天</option>
             </select>
         </div>
         <button class="btn w-full sm:w-auto mt-0" onclick="loadHistory()">搜索</button>
@@ -32,14 +33,14 @@
             <thead>
                 <tr>
                     <th>币种</th>
-                    <th>入场</th>
-                    <th class="mobile-hide">退出</th>
-                    <th class="mobile-hide">原因</th>
-                    <th>PnL</th>
-                    <th class="mobile-hide">K线</th>
-                    <th class="mobile-hide">浮盈</th>
-                    <th class="mobile-hide">浮亏</th>
-                    <th class="mobile-hide">入场时间</th>
+                    <th>入场价</th>
+                    <th>退出价</th>
+                    <th>数量</th>
+                    <th>已实现PnL</th>
+                    <th>手续费</th>
+                    <th>资金费</th>
+                    <th>净盈亏</th>
+                    <th class="mobile-hide">时间</th>
                 </tr>
             </thead>
             <tbody id="history-body">

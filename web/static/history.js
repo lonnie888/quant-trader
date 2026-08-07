@@ -1,18 +1,15 @@
-/** history.js — 交易历史页 */
+/** history.js — 交易历史页 (真实账户数据) */
 let currentPage = 1;
 const perPage = 20;
 
-const exitReasons = { stop_loss: '止损', take_profit: '止盈', time: '时间到期', manual: '手动' };
-
 function color(v) { return v >= 0 ? '#0ecb81' : '#f6465d'; }
-function sign(v) { return v >= 0 ? '+' : ''; }
+function fmt(v) { return (v >= 0 ? '+' : '') + v.toFixed(2); }
 
 async function loadHistory() {
     const symbol = document.getElementById('filter-symbol').value.trim();
-    const reason = document.getElementById('filter-reason').value;
-    let url = `/api/history?page=${currentPage}&per_page=${perPage}`;
+    const days = parseInt(document.getElementById('filter-days').value) || 7;
+    let url = `/api/real-history?page=${currentPage}&per_page=${perPage}&days=${days}`;
     if (symbol) url += `&symbol=${encodeURIComponent(symbol)}`;
-    if (reason) url += `&reason=${encodeURIComponent(reason)}`;
 
     const res = await fetch(url);
     const d = await res.json();
@@ -20,7 +17,7 @@ async function loadHistory() {
     const info = document.getElementById('page-info');
 
     if (!d.trades || !d.trades.length) {
-        body.innerHTML = '<tr><td colspan="9" style="text-align:center; color:#848e9c; padding:30px;">暂无记录</td></tr>';
+        body.innerHTML = '<tr><td colspan="8" style="text-align:center; color:#848e9c; padding:30px;">暂无记录</td></tr>';
         info.textContent = '第 0 页，共 0 条';
         document.getElementById('prev-btn').disabled = true;
         document.getElementById('next-btn').disabled = true;
@@ -28,19 +25,20 @@ async function loadHistory() {
     }
 
     body.innerHTML = d.trades.map(t => {
-        const c = color(t.pnl_pct_lev);
-        const s = sign(t.pnl_pct_lev);
-        const reason = exitReasons[t.exit_reason] || t.exit_reason;
+        const c = color(t.netPnl);
+        const entryStr = t.entry_price ? t.entry_price.toFixed(6) : '—';
+        const exitStr = t.exit_price ? t.exit_price.toFixed(6) : '—';
+        const qtyStr = t.qty > 0 ? t.qty : '—';
         return `<tr>
             <td><b>${t.symbol}</b></td>
-            <td>${t.entry_price.toFixed(6)}</td>
-            <td>${t.exit_price.toFixed(6)}</td>
-            <td>${reason}</td>
-            <td style="color:${c};font-weight:600">${s}${t.pnl_pct_lev.toFixed(2)}%</td>
-            <td>${t.bars_in_trade}</td>
-            <td style="color:#848e9c;font-size:12px">${t.max_fav != null ? t.max_fav.toFixed(2)+'%' : '—'}</td>
-            <td style="color:#848e9c;font-size:12px">${t.max_adv != null ? t.max_adv.toFixed(2)+'%' : '—'}</td>
-            <td style="color:#848e9c;font-size:12px">${t.entry_ts.replace('T',' ').slice(0,16)}</td>
+            <td>${entryStr}</td>
+            <td>${exitStr}</td>
+            <td>${qtyStr}</td>
+            <td style="color:${color(t.realizedPnl)};font-weight:600">${fmt(t.realizedPnl)} USDT</td>
+            <td style="color:#848e9c;font-size:12px">${fmt(t.commission)}</td>
+            <td style="color:#848e9c;font-size:12px">${fmt(t.funding)}</td>
+            <td style="color:${c};font-weight:600">${fmt(t.netPnl)} USDT</td>
+            <td style="color:#848e9c;font-size:12px">${t.time.slice(0, 16)}</td>
         </tr>`;
     }).join('');
 
