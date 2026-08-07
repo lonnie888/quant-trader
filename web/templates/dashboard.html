@@ -4,27 +4,77 @@
 {% block content %}
 <h1 class="text-2xl font-bold mb-6">总览</h1>
 
-<!-- KPI 卡片 -->
-<div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3 sm:gap-4 mb-4 sm:mb-6">
-    <div class="card">
-        <div class="label text-xs sm:text-xs">未实现 PnL</div>
-        <div class="value text-xl sm:text-2xl md:text-3xl" id="unrealized-pnl">--</div>
+<!-- 真实账户 KPI 卡片 -->
+<div class="card mb-4" style="border-left: 4px solid #f0b90b;">
+    <div class="label mb-3" style="color:#f0b90b; font-weight:bold;">💰 真实账户</div>
+    <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3 sm:gap-4">
+        <div class="card" style="background:rgba(240,185,11,0.05);">
+            <div class="label text-xs sm:text-xs">总权益</div>
+            <div class="value text-xl sm:text-2xl md:text-3xl" id="real-equity">--</div>
+        </div>
+        <div class="card" style="background:rgba(240,185,11,0.05);">
+            <div class="label text-xs sm:text-xs">可用余额</div>
+            <div class="value text-xl sm:text-2xl md:text-3xl" id="real-available">--</div>
+        </div>
+        <div class="card" style="background:rgba(240,185,11,0.05);">
+            <div class="label text-xs sm:text-xs">今日 PnL</div>
+            <div class="value text-xl sm:text-2xl md:text-3xl" id="real-today-pnl">--</div>
+        </div>
+        <div class="card" style="background:rgba(240,185,11,0.05);">
+            <div class="label text-xs sm:text-xs">总收益率</div>
+            <div class="value text-xl sm:text-2xl md:text-3xl" id="real-total-return">--</div>
+        </div>
+        <div class="card" style="background:rgba(240,185,11,0.05);">
+            <div class="label text-xs sm:text-xs">持仓数</div>
+            <div class="value text-xl sm:text-2xl md:text-3xl" id="real-positions-count">--</div>
+        </div>
     </div>
-    <div class="card">
-        <div class="label text-xs sm:text-xs">总实现 PnL</div>
-        <div class="value text-xl sm:text-2xl md:text-3xl" id="total-realized-pnl">--</div>
+</div>
+
+<!-- 真实账户权益曲线 -->
+<div class="card mb-6">
+    <div class="label mb-4">📈 真实账户权益曲线</div>
+    <div id="real-equity-wrapper" style="height:250px;">
+        <canvas id="realEquityChart"></canvas>
     </div>
-    <div class="card">
-        <div class="label text-xs sm:text-xs">今日 PnL</div>
-        <div class="value text-xl sm:text-2xl md:text-3xl" id="realized-pnl">--</div>
+</div>
+
+<!-- 真实持仓 -->
+<div class="card mb-6">
+    <div class="flex items-center justify-between mb-4">
+        <span class="label" style="color:#f0b90b;">💰 真实持仓</span>
     </div>
-    <div class="card">
-        <div class="label text-xs sm:text-xs">胜率</div>
-        <div class="value text-xl sm:text-2xl md:text-3xl" id="win-rate">--</div>
+    <div class="table-wrap">
+        <div id="real-positions-table">
+            <p style="color:#848e9c; font-size:14px; padding:20px 0; text-align:center;">加载中...</p>
+        </div>
     </div>
-    <div class="card">
-        <div class="label text-xs sm:text-xs">持仓</div>
-        <div class="value text-xl sm:text-2xl md:text-3xl" id="open-positions">--</div>
+</div>
+
+<!-- 纸上交割 KPI 卡片 -->
+<div class="card mb-4" style="border-left: 4px solid #0ecb81;">
+    <div class="label mb-3" style="color:#0ecb81; font-weight:bold;">📋 纸上交割</div>
+    <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3 sm:gap-4">
+        <div class="card">
+            <div class="label text-xs sm:text-xs">未实现 PnL</div>
+            <div class="value text-xl sm:text-2xl md:text-3xl" id="unrealized-pnl">--</div>
+        </div>
+        <div class="card">
+            <div class="label text-xs sm:text-xs">总实现 PnL</div>
+            <div class="value text-xl sm:text-2xl md:text-3xl" id="total-realized-pnl">--</div>
+        </div>
+        <div class="card">
+            <div class="label text-xs sm:text-xs">今日 PnL</div>
+            <div class="value text-xl sm:text-2xl md:text-3xl" id="realized-pnl">--</div>
+        </div>
+        <div class="card">
+            <div class="label text-xs sm:text-xs">胜率</div>
+            <div class="value text-xl sm:text-2xl md:text-3xl" id="win-rate">--</div>
+        </div>
+        <div class="card">
+            <div class="label text-xs sm:text-xs">持仓</div>
+            <div class="value text-xl sm:text-2xl md:text-3xl" id="open-positions">--</div>
+        </div>
     </div>
 </div>
 

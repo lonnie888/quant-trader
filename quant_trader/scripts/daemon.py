@@ -844,6 +844,20 @@ async def main():
         asyncio.create_task(_supervised("positions_report", lambda: _positions_report_loop(settings, stop_event, refresh_event, broker)), name="positions_report"),
     ]
 
+    # Real account equity tracker (save snapshot every 15 min)
+    if hasattr(broker, "is_real") and broker.is_real:
+        async def _real_equity_loop():
+            from quant_trader.execution.real_account import save_snapshot
+            while not stop_event.is_set():
+                try:
+                    save_snapshot(broker.api_key, broker.secret, broker.proxy)
+                except Exception as ex:
+                    log.warning("real equity snapshot failed: %s", ex)
+                await asyncio.sleep(900)  # 15 min
+        tasks.append(asyncio.create_task(
+            _supervised("real_equity", lambda: _real_equity_loop()), name="real_equity"
+        ))
+
     # Sync demo with paper ledger on startup (close orphaned positions)
     await _sync_demo_positions_on_startup(broker)
 

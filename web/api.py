@@ -2,6 +2,7 @@
 
 import json
 import logging
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -238,6 +239,75 @@ def summary():
     open_evs = _current_open_positions(events)
     summary_data = _compute_summary(open_evs, events)
     return jsonify(summary_data)
+
+
+@api_bp.route("/real-summary")
+def real_summary():
+    """Real account summary from Binance API."""
+    from quant_trader.config import load_settings
+    import hmac, hashlib
+    _s = load_settings()
+    api_key = getattr(_s.demo_trading, "api_key", "")
+    api_secret = getattr(_s.demo_trading, "api_secret", "")
+    proxy = getattr(_s, "proxy", None)
+    if not api_key or not api_secret:
+        return jsonify({"error": "API key not configured"}), 400
+
+    try:
+        from quant_trader.execution.real_account import get_realtime_summary, load_history
+        data = get_realtime_summary(api_key, api_secret, proxy)
+        history = load_history()
+
+        # Compute today's realized PnL
+        today = time.strftime("%Y-%m-%d", time.gmtime())
+        today_realized = 0.0
+        ts = int(time.time() * 1000)
+        start_of_day = int(time.mktime(time.strptime(today, "%Y-%m-%d"))) * 1000
+        params = {"timestamp": str(ts), "recvWindow": "10000", "limit": "500", "startTime": str(start_of_day)}
+        q = "&".join(f"{k}={v}" for k, v in sorted(params.items()))
+        sig = hmac.new(api_secret.encode(), q.encode(), hashlib.sha256).hexdigest()
+        proxies = {"http": proxy, "https": proxy} if proxy else None
+        r = requests.get(
+            f"https://fapi.binance.com/fapi/v1/income?{q}&signature={sig}",
+            headers={"X-MBX-APIKEY": api_key}, proxies=proxies, timeout=10
+        )
+        if r.status_code == 200:
+            incomes = r.json()
+            for inc in incomes:
+                if isinstance(inc, dict) and inc.get("incomeType") in ("REALIZED_PNL", "COMMISSION", "FUNDING_FEE"):
+                    today_realized += float(inc.get("income", 0))
+
+        # Compute initial equity from history
+        initial_equity = 10.0  # default
+        if len(history) > 0:
+            initial_equity = history[0].get("totalWalletBalance", 10.0)
+
+        data["todayRealizedPnl"] = round(today_realized, 4)
+        data["todayRealizedPct"] = round(today_realized / (data["totalWalletBalance"] or 1) * 100, 2)
+        data["totalReturnPct"] = round((data["totalWalletBalance"] - initial_equity) / initial_equity * 100, 2)
+        data["totalReturnUsdt"] = round(data["totalWalletBalance"] - initial_equity, 2)
+        return jsonify(data)
+    except Exception as ex:
+        log.warning("real summary failed: %s", ex)
+        return jsonify({"error": str(ex)}), 500
+
+
+@api_bp.route("/real-equity")
+def real_equity():
+    """Real account equity history for chart."""
+    from quant_trader.execution.real_account import load_history
+    history = load_history()
+    # Return equity curve data
+    curve = []
+    for snap in history:
+        curve.append({
+            "t": snap.get("date", ""),
+            "ts": snap.get("timestamp", 0),
+            "equity": snap.get("totalWalletBalance", 0),
+            "available": snap.get("availableBalance", 0),
+            "positions": snap.get("positionCount", 0),
+        })
+    return jsonify(curve)
 
 
 @api_bp.route("/positions")
