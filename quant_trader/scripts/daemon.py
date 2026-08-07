@@ -644,10 +644,15 @@ async def _rest_poll_loop(settings, kline_loop, sltp, stop_event):
 
     async def _check_sltp() -> None:
         try:
-            async with aiohttp.ClientSession() as sess:
-                async with sess.get(FAPI_TICKER, proxy=PROXY, timeout=aiohttp.ClientTimeout(total=10)) as r:
-                    r.raise_for_status()
-                    tickers = await r.json()
+            import requests as _req
+            # 用 requests + 线程池（aiohttp 代理需要 python-socks，未安装导致超时）
+            def _fetch():
+                proxies = {"http": PROXY, "https": PROXY} if PROXY else None
+                r = _req.get(FAPI_TICKER, proxies=proxies, timeout=10)
+                r.raise_for_status()
+                return r.json()
+            loop = asyncio.get_event_loop()
+            tickers = await loop.run_in_executor(None, _fetch)
         except Exception as ex:
             log.warning("rest poll price fetch failed: %s [%s]", ex, type(ex).__name__)
             return
