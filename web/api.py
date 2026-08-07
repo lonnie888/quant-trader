@@ -542,6 +542,145 @@ def real_history():
         return jsonify({"error": str(ex)}), 500
 
 
+@api_bp.route("/real-analysis")
+def real_analysis():
+    """Analysis data for the dashboard charts."""
+    import hmac, hashlib
+    from collections import defaultdict
+    from quant_trader.config import load_settings
+    _s = load_settings()
+    api_key = getattr(_s.demo_trading, "api_key", "")
+    api_secret = getattr(_s.demo_trading, "api_secret", "")
+    proxy = getattr(_s, "proxy", None)
+    if not api_key or not api_secret:
+        return jsonify({"error": "API key not configured"}), 400
+
+    days = request.args.get("days", 7, type=int)
+    try:
+        proxies = {"http": proxy, "https": proxy} if proxy else None
+        headers = {"X-MBX-APIKEY": api_key}
+        now_ms = int(time.time() * 1000)
+        start_ms = now_ms - days * 24 * 3600 * 1000
+
+        def _sg(url, p):
+            pp = dict(p)
+            pp["timestamp"] = str(now_ms)
+            pp["recvWindow"] = "10000"
+            q = "&".join(f"{k}={v}" for k, v in sorted(pp.items()))
+            sig = hmac.new(api_secret.encode(), q.encode(), hashlib.sha256).hexdigest()
+            r = requests.get(f"{url}?{q}&signature={sig}", headers=headers, proxies=proxies, timeout=15)
+            return r.json() if r.status_code == 200 else []
+
+        # Fetch userTrades + income
+        user_trades = _sg("https://fapi.binance.com/fapi/v1/userTrades",
+                          {"startTime": str(start_ms), "limit": "1000"})
+        incomes = _sg("https://fapi.binance.com/fapi/v1/income",
+                      {"startTime": str(start_ms), "limit": "1000"})
+
+        # Extract close trades (SELL with realized PnL)
+        closes = []
+        for ut in user_trades if isinstance(user_trades, list) else []:
+            if not isinstance(ut, dict) or ut.get("side") != "SELL":
+                continue
+            pnl = float(ut.get("realizedPnl", 0))
+            if abs(pnl) < 0.0001:
+                continue
+            sym = ut.get("symbol", "")
+            ts = ut.get("time", 0)
+            qty = float(ut.get("qty", 0))
+            price = float(ut.get("price", 0))
+            closes.append({
+                "sym": sym.replace("USDT", ""),
+                "ts": ts,
+                "day": time.strftime("%Y-%m-%d", time.gmtime(ts / 1000)),
+                "pnl": pnl,
+                "qty": qty,
+                "price": price,
+            })
+
+        # 1. Exit reason distribution
+        # We can't get exact reason from Binance API, but we can infer:
+        # - If PnL > 0 and price moved up significantly → likely take_profit
+        # - If PnL < 0 and price moved down significantly → likely stop_loss
+        # - Otherwise → time exit
+        # For now, categorize by PnL sign
+        total_trades = len(closes)
+        wins = sum(1 for c in closes if c["pnl"] > 0)
+        losses = sum(1 for c in closes if c["pnl"] < 0)
+        total_pnl = sum(c["pnl"] for c in closes)
+        win_rate = wins / total_trades * 100 if total_trades else 0
+
+        # 2. By symbol
+        by_sym = defaultdict(lambda: {"trades": 0, "wins": 0, "pnl": 0.0})
+        for c in closes:
+            s = c["sym"]
+            by_sym[s]["trades"] += 1
+            by_sym[s]["pnl"] += c["pnl"]
+            if c["pnl"] > 0:
+                by_sym[s]["wins"] += 1
+        top_symbols = sorted(by_sym.items(), key=lambda x: x[1]["pnl"], reverse=True)[:15]
+        worst_symbols = sorted(by_sym.items(), key=lambda x: x[1]["pnl"])[:15]
+
+        # 3. Daily PnL series
+        by_day = defaultdict(lambda: {"pnl": 0.0, "trades": 0, "wins": 0})
+        for c in closes:
+            d = c["day"]
+            by_day[d]["pnl"] += c["pnl"]
+            by_day[d]["trades"] += 1
+            if c["pnl"] > 0:
+                by_day[d]["wins"] += 1
+        daily_pnl = [{"date": d, "pnl": round(v["pnl"], 4), "trades": v["trades"]}
+                     for d, v in sorted(by_day.items())]
+
+        # 4. Cumulative equity curve
+        days_sorted = sorted(by_day.keys())
+        cumulative = 0.0
+        equity_curve = []
+        for d in days_sorted:
+            cumulative += by_day[d]["pnl"]
+            equity_curve.append({"date": d, "equity": round(cumulative, 4)})
+
+        # 5. PnL distribution (bucket by size)
+        pnl_buckets = {"<-2": 0, "-2~-1": 0, "-1~-0.5": 0, "-0.5~0": 0,
+                       "0~0.5": 0, "0.5~1": 0, "1~2": 0, ">2": 0}
+        for c in closes:
+            p = c["pnl"]
+            if p < -2: pnl_buckets["<-2"] += 1
+            elif p < -1: pnl_buckets["-2~-1"] += 1
+            elif p < -0.5: pnl_buckets["-0.5~0"] += 1
+            elif p < 0: pnl_buckets["-0.5~0"] += 1
+            elif p < 0.5: pnl_buckets["0~0.5"] += 1
+            elif p < 1: pnl_buckets["0.5~1"] += 1
+            elif p < 2: pnl_buckets["1~2"] += 1
+            else: pnl_buckets[">2"] += 1
+
+        return jsonify({
+            "summary": {
+                "total_trades": total_trades,
+                "wins": wins,
+                "losses": losses,
+                "win_rate": round(win_rate, 1),
+                "total_pnl": round(total_pnl, 4),
+                "days": days,
+            },
+            "exit_reasons": {
+                "stop_loss": losses,
+                "take_profit": wins,
+                "time": 0,  # Binance doesn't provide exit reason
+            },
+            "daily_pnl": daily_pnl,
+            "equity_curve": equity_curve,
+            "top_symbols": [{"symbol": s, "pnl": round(v["pnl"], 4), "trades": v["trades"], "wins": v["wins"]}
+                           for s, v in top_symbols],
+            "worst_symbols": [{"symbol": s, "pnl": round(v["pnl"], 4), "trades": v["trades"], "wins": v["wins"]}
+                             for s, v in worst_symbols],
+            "pnl_distribution": [{"range": k, "count": v} for k, v in pnl_buckets.items()],
+        })
+    except Exception as ex:
+        log.warning("real analysis failed: %s", ex)
+        return jsonify({"error": str(ex)}), 500
+
+
 @api_bp.route("/klines/<symbol>")
 def klines(symbol):
     since = request.args.get("since", None)

@@ -1,0 +1,86 @@
+{% extends "layout.html" %}
+{% block title %}数据分析 - Quant Trader{% endblock %}
+
+{% block content %}
+<h1 class="text-xl sm:text-2xl font-bold mb-4 sm:mb-6">📊 交易数据分析</h1>
+
+<!-- 时间筛选 -->
+<div class="card mb-4">
+    <div class="flex items-center gap-4 mobile-stack">
+        <div class="w-full sm:w-auto">
+            <label class="label block mb-1">时间范围</label>
+            <select id="filter-days" class="w-full sm:w-[140px]" onchange="loadAnalysis()">
+                <option value="7" selected>最近 7 天</option>
+                <option value="14">最近 14 天</option>
+                <option value="30">最近 30 天</option>
+                <option value="90">最近 90 天</option>
+            </select>
+        </div>
+    </div>
+</div>
+
+<!-- 总览 KPI -->
+<div class="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4 mb-4">
+    <div class="card" style="background:rgba(240,185,11,0.05);">
+        <div class="label text-xs">总交易数</div>
+        <div class="value text-xl sm:text-2xl" id="kpi-trades">--</div>
+    </div>
+    <div class="card" style="background:rgba(240,185,11,0.05);">
+        <div class="label text-xs">胜率</div>
+        <div class="value text-xl sm:text-2xl" id="kpi-winrate">--</div>
+    </div>
+    <div class="card" style="background:rgba(240,185,11,0.05);">
+        <div class="label text-xs">总盈亏</div>
+        <div class="value text-xl sm:text-2xl" id="kpi-pnl">--</div>
+    </div>
+    <div class="card" style="background:rgba(240,185,11,0.05);">
+        <div class="label text-xs">盈利/亏损</div>
+        <div class="value text-xl sm:text-2xl" id="kpi-wl">--</div>
+    </div>
+</div>
+
+<!-- 图表区 -->
+<div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+    <!-- 饼图：盈亏分布 -->
+    <div class="card">
+        <div class="label mb-4">💰 盈亏分布</div>
+        <div style="height:280px;"><canvas id="chart-pnl-pie"></canvas></div>
+    </div>
+    <!-- 饼图：PnL 金额分布 -->
+    <div class="card">
+        <div class="label mb-4">📊 单笔盈亏分布</div>
+        <div style="height:280px;"><canvas id="chart-pnl-dist"></canvas></div>
+    </div>
+</div>
+
+<div class="grid grid-cols-1 gap-4 mb-4">
+    <!-- 折线图：累计权益 -->
+    <div class="card">
+        <div class="label mb-4">📈 累计权益曲线</div>
+        <div style="height:280px;"><canvas id="chart-equity"></canvas></div>
+    </div>
+    <!-- 柱状图：每日盈亏 -->
+    <div class="card">
+        <div class="label mb-4">📅 每日盈亏</div>
+        <div style="height:280px;"><canvas id="chart-daily"></canvas></div>
+    </div>
+</div>
+
+<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+    <!-- 柱状图：最佳币种 -->
+    <div class="card">
+        <div class="label mb-4">🏆 最佳币种 TOP 10</div>
+        <div style="height:300px;"><canvas id="chart-top-symbols"></canvas></div>
+    </div>
+    <!-- 柱状图：最差币种 -->
+    <div class="card">
+        <div class="label mb-4">⛔ 最差币种 TOP 10</div>
+        <div style="height:300px;"><canvas id="chart-worst-symbols"></canvas></div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="/static/analysis.js"></script>
+{% endblock %}

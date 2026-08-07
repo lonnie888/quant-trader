@@ -73,6 +73,11 @@ def create_app() -> Flask:
     def history():
         return render_template("history.html")
 
+    @app.route("/analysis")
+    @login_required
+    def analysis():
+        return render_template("analysis.html")
+
     @app.route("/chart")
     @login_required
     def chart():
