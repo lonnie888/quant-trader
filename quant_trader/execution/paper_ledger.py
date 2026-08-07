@@ -159,15 +159,13 @@ def evaluate_risk(
     initial_capital: float,
     max_position_pct: float,
     max_total_exposure: float,
-    daily_loss_limit: float,
     max_concurrent: int,
-    margin_pct: float = 0.20,  # 每单用20%权益
 ) -> tuple[bool, str]:
     """Decide whether a new entry is allowed.
 
     Returns (allowed, reason). reason is "" when allowed, otherwise a short
-    tag such as "max_concurrent", "max_total_exposure", "daily_loss_limit".
-    """
+    tag such as "max_concurrent", "max_total_exposure".
+    Circuit breaker is handled separately by the daemon (real account balance check)."""
     # Only count open events without matching closed/blocked
     closed_ids: set[int] = set()
     for ev in events:
@@ -183,14 +181,6 @@ def evaluate_risk(
     used_pct = min(len(open_pos) * max_position_pct, max_total_exposure)
     if used_pct + max_position_pct > max_total_exposure + 1e-9:
         return False, "max_total_exposure"
-
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    realized = _today_realized_pnl(events, today)
-    # 按保证金占比缩放: 实际账户亏损 = 杠杆收益% × 每单保证金比例
-    # 每单用20%权益, 所以一次SL(-12%×5x=-60%杠杆)实际只亏账户12%
-    realized_equity = realized * margin_pct
-    if realized_equity <= -abs(daily_loss_limit):
-        return False, "daily_loss_limit"
 
     return True, ""
 

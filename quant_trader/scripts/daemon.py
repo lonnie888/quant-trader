@@ -187,7 +187,6 @@ async def _refresh_watchlist(broker, settings, top_n: int = 30,
                 "initial_capital": float(settings.backtest.initial_capital),
                 "max_position_pct": float(risk_cfg.max_position_pct),
                 "max_total_exposure": float(risk_cfg.max_total_exposure),
-                "daily_loss_limit": float(risk_cfg.daily_loss_limit),
                 "max_concurrent": int(risk_cfg.max_concurrent),
             }
             today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -314,7 +313,6 @@ async def _refresh_watchlist(broker, settings, top_n: int = 30,
                             reason_zh = {
                                 "max_concurrent": "已达持仓上限",
                                 "max_total_exposure": "总敞口超限",
-                                "daily_loss_limit": "日亏损达限",
                             }.get(reason, reason)
                             blocked_list.append((sym.split("/")[0].split(":")[0], reason_zh))
                             continue
@@ -891,11 +889,7 @@ async def main():
         log.warning("⚠️  REAL MONEY ACCOUNT DETECTED ⚠️")
         log.warning("    Endpoint: %s", _FAPI_BASE_CHECK)
         log.warning("    Hard cap: 10 USDT per position")
-        log.warning("    Daily loss limit must be <= 0.10 for safety")
-        cur_dll = float(settings.risk.daily_loss_limit)
-        if cur_dll > 0.10:
-            log.warning("    OVERRIDING daily_loss_limit %.2f -> 0.70 (account-level, scaled for 20%% margin)", cur_dll)
-            settings.risk.daily_loss_limit = 0.70
+        log.warning("    Circuit breaker: account loss >= 60% (real balance check)")
         log.warning("=" * 60)
 
     # Start REST polling and watchlist immediately (don't wait for WS)
