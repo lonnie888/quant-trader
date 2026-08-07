@@ -168,6 +168,9 @@ async def _refresh_watchlist(broker, settings, top_n: int = 30,
                 await asyncio.sleep(900)
                 continue
 
+            # 当前循环已开仓的币种（防止同一循环内重复开单）
+            _cycle_opened_syms: set = set()
+            
             # Run strategy on each symbol
             from quant_trader.strategy.generator.auto_strategy import generate_instances
             from quant_trader.execution.paper_ledger import get_all_positions, get_open_positions, open_position, _has_open, evaluate_risk
@@ -288,7 +291,7 @@ async def _refresh_watchlist(broker, settings, top_n: int = 30,
                         all_events = get_all_positions(positions_path)
                         # 检查是否已有同币种持仓（防止重复开单）
                         from quant_trader.execution.paper_ledger import _has_open
-                        if _has_open(all_events, sym):
+                        if sym in _cycle_opened_syms or _has_open(all_events, sym):
                             log.info("跳过 %s: 已有同币种持仓", sym)
                             blocked += 1
                             blocked_list.append((sym.split("/")[0].split(":")[0], "已有持仓"))
@@ -325,6 +328,7 @@ async def _refresh_watchlist(broker, settings, top_n: int = 30,
                         if ev is not None and ev.status == "open":
                             opened += 1
                             opened_syms.append(sym.split("/")[0].split(":")[0])
+                            _cycle_opened_syms.add(sym)
                             log.info("✅ [watchlist] open %s @ %.6f id=%d", sym, entry_price, ev.id)
                         else:
                             pass  # enter failed, log already emitted by broker
