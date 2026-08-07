@@ -417,7 +417,16 @@ async def _refresh_watchlist(broker, settings, top_n: int = 30,
         # Signal positions_report task that a refresh cycle is complete
         if refresh_event is not None:
             refresh_event.set()
-        await asyncio.sleep(900)
+        # 对齐K线收盘时间（每15分钟整点），收盘后立即检查开单，不固定等900秒
+        try:
+            import time as _time
+            now = _time.time()
+            # 下一个15分钟整点（00:00,00:15,00:30,00:45）
+            next_15min = (int(now) // 900 + 1) * 900
+            wait = next_15min - now
+            await asyncio.sleep(max(wait, 1))
+        except Exception:
+            await asyncio.sleep(900)
 
 
 async def _positions_report_loop(settings, stop_event, watchlist_event: asyncio.Event, broker=None):
