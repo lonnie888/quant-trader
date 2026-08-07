@@ -394,17 +394,55 @@ async def _positions_report_loop(settings, stop_event, watchlist_event: asyncio.
             
             if use_real and real_data and real_data.get("positionCount", 0) > 0:
                 # Build card from real account data
+                equity = real_data.get("totalWalletBalance", 1)
+                
+                # Read paper ledger for entry times (to compute remaining bars)
+                from quant_trader.execution.paper_ledger import get_all_positions
+                paper_events = get_all_positions(positions_path)
+                paper_entries = {}
+                for ev in paper_events:
+                    if ev.get("status") == "open":
+                        sym = ev["symbol"].split("/")[0].split(":")[0] + "USDT"
+                        paper_entries[sym] = {
+                            "entry_ts": ev.get("entry_ts", ""),
+                            "hold_bars": int(ev.get("params", {}).get("hold_bars", 48)),
+                        }
+                
                 positions_data = []
-                total_unrealized = 0.0
+                total_unrealized_usdt = 0.0
                 for pos in real_data.get("positions", []):
-                    pnl_lev = pos.get("unrealizedPnl", 0)
-                    total_unrealized += pnl_lev
+                    sym = pos["symbol"]
+                    entry = pos["entry"]
+                    mark = pos["mark"]
+                    lev = pos.get("leverage", 5)
+                    # Leveraged PnL % = price change % * leverage
+                    pnl_pct = (mark - entry) / entry if entry > 0 else 0
+                    pnl_lev = pnl_pct * lev
+                    pnl_usdt = pos.get("unrealizedPnl", 0)
+                    total_unrealized_usdt += pnl_usdt
+                    
+                    # Compute remaining bars from paper ledger entry time
+                    rb = -1
+                    if sym in paper_entries:
+                        pe = paper_entries[sym]
+                        entry_ts = pe.get("entry_ts", "")
+                        if entry_ts:
+                            try:
+                                ed = datetime.fromisoformat(entry_ts.replace("Z", "+00:00"))
+                                if ed.tzinfo is None:
+                                    ed = ed.replace(tzinfo=timezone.utc)
+                                now = datetime.now(timezone.utc)
+                                elapsed_bars = int((now - ed).total_seconds() / (15 * 60))
+                                rb = max(0, pe["hold_bars"] - elapsed_bars)
+                            except Exception:
+                                pass
+                    
                     positions_data.append({
-                        "symbol": pos["symbol"],
-                        "entry_price": pos["entry"],
-                        "last_close": pos["mark"],
+                        "symbol": sym,
+                        "entry_price": entry,
+                        "last_close": mark,
                         "pnl_pct_lev": pnl_lev,
-                        "remaining_bars": -1,
+                        "remaining_bars": rb,
                         "max_favorable_pct": 0.0,
                         "max_adverse_pct": 0.0,
                     })
@@ -427,13 +465,18 @@ async def _positions_report_loop(settings, stop_event, watchlist_event: asyncio.
                         if isinstance(inc, dict) and inc.get("incomeType") in ("REALIZED_PNL", "COMMISSION", "FUNDING_FEE"):
                             today_realized += float(inc.get("income", 0))
                 
+                # Convert to percentages for display
+                unrealized_pct = total_unrealized_usdt / equity * 100 if equity > 0 else 0
+                realized_pct = today_realized / equity * 100 if equity > 0 else 0
+                profitable_count = sum(1 for p in positions_data if p["pnl_pct_lev"] > 0)
+                
                 card = FeishuCardBuilder.make_positions_check(
                     today=today,
-                    total_unrealized_pct=total_unrealized,
-                    total_realized_pct=today_realized,
+                    total_unrealized_pct=unrealized_pct,
+                    total_realized_pct=realized_pct,
                     open_count=real_data["positionCount"],
                     closed_count=0,
-                    profitable=sum(1 for p in real_data["positions"] if p.get("unrealizedPnl", 0) > 0),
+                    profitable=profitable_count,
                     positions=positions_data,
                 )
                 fw = getattr(settings.notify, "feishu_webhook", None)
