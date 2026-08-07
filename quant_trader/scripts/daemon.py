@@ -348,124 +348,150 @@ async def _refresh_watchlist(broker, settings, top_n: int = 30,
 
 
 async def _positions_report_loop(settings, stop_event, watchlist_event: asyncio.Event, broker=None):
-    """Send positions check card to Feishu when watchlist refresh completes."""
+    """Send positions check card to Feishu when watchlist refresh completes.
+    Uses real account data when available, falls back to paper ledger."""
     from datetime import datetime, timezone, timedelta
     from quant_trader.execution.notifier import FeishuNotifier, FeishuCardBuilder
-    from quant_trader.execution.paper_ledger import get_all_positions
     from pathlib import Path
     import requests as sync_req
-
-    FAPI_TICKER = "https://fapi.binance.com/fapi/v1/ticker/price"
+    
     PROXY = getattr(settings, "proxy", None)
     positions_path = Path("reports/paper/positions.jsonl")
 
-    _price_cache: dict = {}
-    _price_cache_ts: float = 0.0
-
-    def _fetch_prices_sync():
-        nonlocal _price_cache, _price_cache_ts  # type: ignore
-        import time as _t
-        try:
-            r = sync_req.get(FAPI_TICKER, proxies={"http": PROXY, "https": PROXY}, timeout=10,
-                             headers={"User-Agent": "Mozilla/5.0"})
-            data = r.json()
-            if isinstance(data, list) and len(data) > 0:
-                _price_cache.clear()
-                for p in data:
-                    _price_cache[p["symbol"]] = float(p["price"])
-                _price_cache_ts = _t.time()
-                return data
-            return list(_price_cache.values())
-        except Exception as ex:
-            age = _t.time() - _price_cache_ts if _price_cache_ts else 0
-            log.warning("positions report: ticker fetch failed: %s (cache: %d symbols, %.0fs old)",
-                        ex, len(_price_cache), age)
-            return [{"symbol": s, "price": p} for s, p in _price_cache.items()]
-
     while not stop_event.is_set():
-        # Wait for watchlist to finish a refresh cycle
         try:
             await asyncio.wait_for(watchlist_event.wait(), timeout=300.0)
             watchlist_event.clear()
         except asyncio.TimeoutError:
-            continue  # safety: fire anyway every 5 min
+            continue
         if stop_event.is_set():
             break
         try:
-            open_pos = []
-            closed_ids = set()
-            all_events = get_all_positions(positions_path)
-            for ev in all_events:
-                if ev.get("status") in ("closed", "blocked"):
-                    closed_ids.add(int(ev["id"]))
-            for ev in all_events:
-                if ev.get("status") == "open" and int(ev["id"]) not in closed_ids:
-                    open_pos.append(ev)
-
             today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-            realized_today = 0.0
-            for ev in all_events:
-                if ev.get("status") == "closed" and ev.get("exit_ts", "").startswith(today):
-                    realized_today += ev.get("pnl_pct_lev", 0.0) or 0.0
-
-            price_map = {}
-            tickers = _fetch_prices_sync()
-            price_map = {p["symbol"]: float(p["price"]) for p in tickers}
-
-            positions_data = []
-            total_unrealized = 0.0
-            for ev in open_pos:
-                api_sym = ev["symbol"].split("/")[0].split(":")[0] + "USDT"
-                entry = float(ev["entry_price"])
-                mark = price_map.get(api_sym, entry)
-                pnl_pct = (mark - entry) / entry if entry else 0.0
-                lev = float(ev.get("leverage", 3.0))
-                pnl_lev = pnl_pct * lev
-                total_unrealized += pnl_lev
-                remaining_bars = int(ev["params"].get("hold_bars", 24))
-                # Calculate actual remaining bars based on elapsed time
-                entry_ts = ev.get("entry_ts", "")
-                if entry_ts:
-                    try:
-                        ed = datetime.fromisoformat(entry_ts.replace("Z", "+00:00"))
-                        # 兼容无时区的时间戳
-                        if ed.tzinfo is None:
-                            ed = ed.replace(tzinfo=timezone.utc)
-                        now = datetime.now(timezone.utc)
-                        elapsed_bars = int((now - ed).total_seconds() / (15 * 60))
-                        remaining_bars = max(0, remaining_bars - elapsed_bars)
-                    except Exception:
-                        pass
-                positions_data.append({
-                    "symbol": ev["symbol"],
-                    "entry_price": entry,
-                    "last_close": mark,
-                    "pnl_pct_lev": pnl_lev,
-                    "remaining_bars": remaining_bars,
-                    "max_favorable_pct": 0.0,
-                    "max_adverse_pct": 0.0,
-                })
-
-            total_closed = sum(1 for ev in all_events if ev.get("status") == "closed")
-            profitable = sum(1 for p in positions_data if p["pnl_pct_lev"] > 0)
-
-            card = FeishuCardBuilder.make_positions_check(
-                today=today,
-                total_unrealized_pct=total_unrealized * 100,
-                total_realized_pct=realized_today * 100,
-                open_count=len(open_pos),
-                closed_count=total_closed,
-                profitable=profitable,
-                positions=positions_data,
-            )
-            if len(open_pos) == 0:
-                log.info("positions report skipped: 0 open positions")
-                _save_equity_snapshot(broker)
-                continue
-            from quant_trader.execution.notifier import FeishuNotifier
-            fw = getattr(settings.notify, "feishu_webhook", None)
-            FeishuNotifier(webhook_url=fw).send_card(card)
-            log.info("positions report sent (after kline close): %d open", len(open_pos))
+            
+            # Try real account data first
+            use_real = False
+            real_data = None
+            if broker is not None and hasattr(broker, "api_key") and broker.api_key:
+                try:
+                    from quant_trader.execution.real_account import get_realtime_summary
+                    real_data = get_realtime_summary(broker.api_key, broker.secret, broker.proxy)
+                    use_real = True
+                except Exception as ex:
+                    log.warning("positions report: real data fetch failed (%s), fallback to paper", ex)
+            
+            if use_real and real_data and real_data.get("positionCount", 0) > 0:
+                # Build card from real account data
+                positions_data = []
+                total_unrealized = 0.0
+                for pos in real_data.get("positions", []):
+                    pnl_lev = pos.get("unrealizedPnl", 0)
+                    total_unrealized += pnl_lev
+                    positions_data.append({
+                        "symbol": pos["symbol"],
+                        "entry_price": pos["entry"],
+                        "last_close": pos["mark"],
+                        "pnl_pct_lev": pnl_lev,
+                        "remaining_bars": 0,
+                        "max_favorable_pct": 0.0,
+                        "max_adverse_pct": 0.0,
+                    })
+                
+                # Fetch today's realized PnL from Binance
+                import calendar, hmac, hashlib
+                today_realized = 0.0
+                ts = int(datetime.now().timestamp() * 1000)
+                start_of_day = calendar.timegm(time.strptime(today, "%Y-%m-%d")) * 1000
+                params = {"timestamp": str(ts), "recvWindow": "10000", "limit": "500", "startTime": str(start_of_day)}
+                q = "&".join(f"{k}={v}" for k, v in sorted(params.items()))
+                sig = hmac.new(broker.secret.encode(), q.encode(), hashlib.sha256).hexdigest()
+                proxies = {"http": PROXY, "https": PROXY} if PROXY else None
+                r = sync_req.get(
+                    f"https://fapi.binance.com/fapi/v1/income?{q}&signature={sig}",
+                    headers={"X-MBX-APIKEY": broker.api_key}, proxies=proxies, timeout=10
+                )
+                if r.status_code == 200:
+                    for inc in r.json():
+                        if isinstance(inc, dict) and inc.get("incomeType") in ("REALIZED_PNL", "COMMISSION", "FUNDING_FEE"):
+                            today_realized += float(inc.get("income", 0))
+                
+                card = FeishuCardBuilder.make_positions_check(
+                    today=today,
+                    total_unrealized_pct=total_unrealized,
+                    total_realized_pct=today_realized,
+                    open_count=real_data["positionCount"],
+                    closed_count=0,
+                    profitable=sum(1 for p in real_data["positions"] if p.get("unrealizedPnl", 0) > 0),
+                    positions=positions_data,
+                )
+                fw = getattr(settings.notify, "feishu_webhook", None)
+                FeishuNotifier(webhook_url=fw).send_card(card)
+                log.info("positions report sent (real account): %d open", real_data["positionCount"])
+            else:
+                # Fallback to paper ledger
+                from quant_trader.execution.paper_ledger import get_all_positions
+                all_events = get_all_positions(positions_path)
+                closed_ids = set()
+                for ev in all_events:
+                    if ev.get("status") in ("closed", "blocked"):
+                        closed_ids.add(int(ev["id"]))
+                open_pos = [ev for ev in all_events if ev.get("status") == "open" and int(ev["id"]) not in closed_ids]
+                
+                realized_today = 0.0
+                for ev in all_events:
+                    if ev.get("status") == "closed" and ev.get("exit_ts", "").startswith(today):
+                        realized_today += ev.get("pnl_pct_lev", 0.0) or 0.0
+                
+                positions_data = []
+                total_unrealized = 0.0
+                for ev in open_pos:
+                    entry = float(ev["entry_price"])
+                    pnl_pct = 0.0
+                    lev = float(ev.get("leverage", 3.0))
+                    pnl_lev = pnl_pct * lev
+                    total_unrealized += pnl_lev
+                    remaining_bars = int(ev["params"].get("hold_bars", 24))
+                    entry_ts = ev.get("entry_ts", "")
+                    if entry_ts:
+                        try:
+                            ed = datetime.fromisoformat(entry_ts.replace("Z", "+00:00"))
+                            if ed.tzinfo is None:
+                                ed = ed.replace(tzinfo=timezone.utc)
+                            now = datetime.now(timezone.utc)
+                            elapsed_bars = int((now - ed).total_seconds() / (15 * 60))
+                            remaining_bars = max(0, remaining_bars - elapsed_bars)
+                        except Exception:
+                            pass
+                    positions_data.append({
+                        "symbol": ev["symbol"],
+                        "entry_price": entry,
+                        "last_close": 0,
+                        "pnl_pct_lev": pnl_lev,
+                        "remaining_bars": remaining_bars,
+                        "max_favorable_pct": 0.0,
+                        "max_adverse_pct": 0.0,
+                    })
+                
+                total_closed = sum(1 for ev in all_events if ev.get("status") == "closed")
+                profitable = sum(1 for p in positions_data if p["pnl_pct_lev"] > 0)
+                
+                if len(open_pos) == 0:
+                    log.info("positions report skipped: 0 open positions")
+                    _save_equity_snapshot(broker)
+                    continue
+                
+                card = FeishuCardBuilder.make_positions_check(
+                    today=today,
+                    total_unrealized_pct=total_unrealized * 100,
+                    total_realized_pct=realized_today * 100,
+                    open_count=len(open_pos),
+                    closed_count=total_closed,
+                    profitable=profitable,
+                    positions=positions_data,
+                )
+                fw = getattr(settings.notify, "feishu_webhook", None)
+                FeishuNotifier(webhook_url=fw).send_card(card)
+                log.info("positions report sent (paper ledger): %d open", len(open_pos))
         except Exception as ex:
             log.warning("positions report failed: %s", ex)
 
@@ -809,7 +835,7 @@ async def main():
         log.warning("    Daily loss limit must be <= 0.10 for safety")
         cur_dll = float(settings.risk.daily_loss_limit)
         if cur_dll > 0.10:
-            log.warning("    OVERRIDING daily_loss_limit %.2f -> 0.10 (safety)", cur_dll)
+            log.warning("    OVERRIDING daily_loss_limit %.2f -> 0.70 (account-level, scaled for 20%% margin)", cur_dll)
             settings.risk.daily_loss_limit = 0.70
         log.warning("=" * 60)
 

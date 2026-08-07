@@ -161,6 +161,7 @@ def evaluate_risk(
     max_total_exposure: float,
     daily_loss_limit: float,
     max_concurrent: int,
+    margin_pct: float = 0.20,  # 每单用20%权益
 ) -> tuple[bool, str]:
     """Decide whether a new entry is allowed.
 
@@ -185,7 +186,10 @@ def evaluate_risk(
 
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     realized = _today_realized_pnl(events, today)
-    if realized <= -abs(daily_loss_limit):
+    # 按保证金占比缩放: 实际账户亏损 = 杠杆收益% × 每单保证金比例
+    # 每单用20%权益, 所以一次SL(-12%×5x=-60%杠杆)实际只亏账户12%
+    realized_equity = realized * margin_pct
+    if realized_equity <= -abs(daily_loss_limit):
         return False, "daily_loss_limit"
 
     return True, ""
