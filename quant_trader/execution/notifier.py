@@ -98,10 +98,15 @@ class FeishuCardBuilder:
                 )
             else:
                 dot = "🟢" if pnl > 0 else "🔴"
+                rb = r.get('remaining_bars', '?')
+                if isinstance(rb, (int, float)) and rb <= 0:
+                    rb_str = "-"
+                else:
+                    rb_str = str(rb)
                 content = (
                     f"{dot} **{sym_short}**\n"
                     f"入场 `{r['entry_price']:.6f}`  当前 `{r['last_close']:.6f}`\n"
-                    f"收益: **{pct:+.2f}%**  |  剩余: {r.get('remaining_bars', '?')} bars"
+                    f"收益: **{pct:+.2f}%**  |  剩余: {rb_str} bars"
                 )
             elements.append({
                 "tag": "div",
