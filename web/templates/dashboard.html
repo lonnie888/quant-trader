@@ -50,54 +50,6 @@
         </div>
     </div>
 </div>
-
-<!-- 纸上交割 KPI 卡片 -->
-<div class="card mb-4" style="border-left: 4px solid #0ecb81;">
-    <div class="label mb-3" style="color:#0ecb81; font-weight:bold;">📋 纸上交割</div>
-    <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3 sm:gap-4">
-        <div class="card">
-            <div class="label text-xs sm:text-xs">未实现 PnL</div>
-            <div class="value text-xl sm:text-2xl md:text-3xl" id="unrealized-pnl">--</div>
-        </div>
-        <div class="card">
-            <div class="label text-xs sm:text-xs">总实现 PnL</div>
-            <div class="value text-xl sm:text-2xl md:text-3xl" id="total-realized-pnl">--</div>
-        </div>
-        <div class="card">
-            <div class="label text-xs sm:text-xs">今日 PnL</div>
-            <div class="value text-xl sm:text-2xl md:text-3xl" id="realized-pnl">--</div>
-        </div>
-        <div class="card">
-            <div class="label text-xs sm:text-xs">胜率</div>
-            <div class="value text-xl sm:text-2xl md:text-3xl" id="win-rate">--</div>
-        </div>
-        <div class="card">
-            <div class="label text-xs sm:text-xs">持仓</div>
-            <div class="value text-xl sm:text-2xl md:text-3xl" id="open-positions">--</div>
-        </div>
-    </div>
-</div>
-
-<!-- 每日 PnL 图 -->
-<div class="card mb-6">
-    <div class="label mb-4">每日 PnL</div>
-    <div id="chart-wrapper">
-        <canvas id="dailyPnlChart"></canvas>
-    </div>
-</div>
-
-<!-- 当前持仓 -->
-<div class="card">
-    <div class="flex items-center justify-between mb-4">
-        <span class="label">当前持仓</span>
-        <a href="/positions" class="text-sm" style="color:#f0b90b;">查看全部 →</a>
-    </div>
-    <div class="table-wrap">
-        <div id="positions-table">
-            <p style="color:#848e9c; font-size:14px; padding:20px 0; text-align:center;">加载中...</p>
-        </div>
-    </div>
-</div>
 {% endblock %}
 
 {% block scripts %}
