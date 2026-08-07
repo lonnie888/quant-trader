@@ -33,7 +33,7 @@
                     let html = '<table><thead><tr><th>币种</th><th>方向</th><th>数量</th><th>入场</th><th>标记</th><th>保证金</th><th>未实现盈亏</th></tr></thead><tbody>';
                     for (const pos of r.positions) {
                         const symShort = pos.symbol.replace('USDT', '');
-                        html += `<tr style="cursor:pointer;" onclick="window.location.href='/chart?symbol=${symShort}'">
+                        html += `<tr style="cursor:pointer;" onclick="window.open('https://www.binance.com/en/futures/${pos.symbol}','_blank')">
                             <td>${pos.symbol}</td>
                             <td>${pos.side || '-'}</td>
                             <td>${pos.qty}</td>
