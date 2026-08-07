@@ -842,8 +842,8 @@ async def main():
             for pid in output.split():
                 pid = pid.strip()
                 if pid and pid.isdigit():
-                    os.system(f"kill {pid} 2>/dev/null")
-                    log.warning("killed old daemon PID %s", pid)
+                    os.system(f"kill -9 {pid} 2>/dev/null")
+                    log.warning("killed old daemon PID %s (SIGKILL)", pid)
     except Exception:
         pass
 
