@@ -43,7 +43,55 @@ DEFAULT_WATCHLIST: list[str] = []
 
 
 # Module-level trade cooldown set (stop_loss prevention)
-_COOLDOWN_SYMBOLS: set = set()
+# Persisted to file to survive daemon restarts
+import json
+from pathlib import Path
+
+_COOLDOWN_FILE = Path("reports/paper/cooldown.json")
+_COOLDOWN_SYMBOLS: dict = {}  # sym_short -> expiry_timestamp (UTC)
+
+def _load_cooldowns():
+    """Load cooldown symbols from file."""
+    global _COOLDOWN_SYMBOLS
+    try:
+        if _COOLDOWN_FILE.exists():
+            data = json.loads(_COOLDOWN_FILE.read_text())
+            now = time.time()
+            _COOLDOWN_SYMBOLS = {}
+            for sym, expiry in data.items():
+                if expiry > now:
+                    _COOLDOWN_SYMBOLS[sym] = expiry
+            if _COOLDOWN_SYMBOLS:
+                log.info("loaded %d cooldowns from file", len(_COOLDOWN_SYMBOLS))
+    except Exception:
+        _COOLDOWN_SYMBOLS = {}
+
+def _save_cooldowns():
+    """Save cooldown symbols to file."""
+    try:
+        _COOLDOWN_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _COOLDOWN_FILE.write_text(json.dumps(_COOLDOWN_SYMBOLS, indent=2))
+    except Exception:
+        pass
+
+def _is_cooldown(sym: str) -> bool:
+    """Check if symbol is in cooldown (and clean expired)."""
+    global _COOLDOWN_SYMBOLS
+    now = time.time()
+    expired = [s for s, t in _COOLDOWN_SYMBOLS.items() if t <= now]
+    if expired:
+        for s in expired:
+            del _COOLDOWN_SYMBOLS[s]
+        _save_cooldowns()
+    return sym in _COOLDOWN_SYMBOLS
+
+def _add_cooldown(sym_short: str, hours: int = 24):
+    """Add symbol to trade cooldown set (avoid re-entry after SL)."""
+    expiry = time.time() + hours * 3600
+    _COOLDOWN_SYMBOLS[sym_short] = expiry
+    _save_cooldowns()
+    log.info("cooldown added %s (until %s)", sym_short,
+             time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(expiry)))
 # Daily circuit breaker: when tripped, no new trades today
 _CIRCUIT_BROKEN_DATE: str = ""  # UTC date string when circuit broke
 _CIRCUIT_SESSION_START: float = 0.0  # timestamp when daemon started (in UTC seconds)
@@ -252,7 +300,7 @@ async def _refresh_watchlist(broker, settings, top_n: int = 30,
                     df = store.load(sym, "15m")
                 if df is None or df.empty or len(df) < 100:
                     continue
-                if sym in _COOLDOWN_SYMBOLS:
+                if _is_cooldown(sym):
                     continue
                 for name, params, strat in instances:
                     try:
@@ -797,10 +845,6 @@ async def main():
     from quant_trader.execution.notifier import FeishuNotifier, FeishuCardBuilder
     feishu_webhook = getattr(settings.notify, "feishu_webhook", None)
     feishu = FeishuNotifier(webhook_url=feishu_webhook)
-    def _add_cooldown(sym_short: str):
-        """Add symbol to trade cooldown set (avoid re-entry after SL)."""
-        _COOLDOWN_SYMBOLS.add(sym_short)
-        log.info("cooldown added %s (24h skip)", sym_short)
 
     def _on_sltp_close(closed: dict):
         """Called by sltp.on_mark when a position is auto-closed."""
@@ -909,6 +953,9 @@ async def main():
                     await asyncio.wait_for(stop_event.wait(), timeout=30.0)
                 except asyncio.TimeoutError:
                     pass
+
+    # Load persisted cooldowns from file
+    _load_cooldowns()
 
     # Reset circuit breaker on startup (don't count historical losses)
     global _CIRCUIT_BROKEN_DATE, _CIRCUIT_SESSION_START
