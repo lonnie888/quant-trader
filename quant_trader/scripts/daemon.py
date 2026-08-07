@@ -342,19 +342,25 @@ async def _refresh_watchlist(broker, settings, top_n: int = 30,
                             blocked += 1
                             blocked_list.append((sym.split("/")[0].split(":")[0], "已有持仓"))
                             continue
-                        allowed, reason = evaluate_risk(all_events, **risk_check)
-                        # 如果用真实账户，额外检查真实持仓数
-                        if allowed and hasattr(broker, "is_real") and broker.is_real:
+                        # 实盘模式下，优先用真实账户持仓数判断上限
+                        if hasattr(broker, "is_real") and broker.is_real:
                             try:
                                 from quant_trader.execution.real_account import get_realtime_summary
                                 real = get_realtime_summary(broker.api_key, broker.secret, broker.proxy)
                                 real_pos_count = real.get("positionCount", 0)
-                                if real_pos_count >= int(risk_check.get("max_concurrent", 3)):
+                                max_conc = int(risk_check.get("max_concurrent", 3))
+                                if real_pos_count >= max_conc:
                                     allowed = False
                                     reason = "max_concurrent"
                                     log.info("实盘已达持仓上限(%d), 跳过 %s", real_pos_count, sym)
+                                else:
+                                    allowed = True  # 覆盖paper账本的检查
+                                    reason = ""
                             except Exception:
-                                pass  # fallback to paper
+                                # fallback: 用paper账本检查
+                                allowed, reason = evaluate_risk(all_events, **risk_check)
+                        else:
+                            allowed, reason = evaluate_risk(all_events, **risk_check)
                         if not allowed:
                             blocked += 1
                             reason_zh = {
