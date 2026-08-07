@@ -394,7 +394,7 @@ def history():
 
 @api_bp.route("/real-history")
 def real_history():
-    """Real account trade history from Binance income/userTrades."""
+    """Real account trade history from Binance userTrades (每笔SELL=一条独立平仓记录)."""
     from quant_trader.config import load_settings
     import hmac, hashlib, calendar
     _s = load_settings()
@@ -407,7 +407,7 @@ def real_history():
     page = request.args.get("page", 1, type=int)
     per_page = request.args.get("per_page", 20, type=int)
     symbol_filter = request.args.get("symbol", "", type=str).upper()
-    days = request.args.get("days", 7, type=int)  # default 7 days
+    days = request.args.get("days", 7, type=int)
 
     try:
         proxies = {"http": proxy, "https": proxy} if proxy else None
@@ -415,7 +415,6 @@ def real_history():
         now_ms = int(time.time() * 1000)
         start_ms = now_ms - days * 24 * 3600 * 1000
 
-        # Fetch income records (realized PnL, fees, funding)
         def _signed_get(url, extra_params):
             params = dict(extra_params)
             params["timestamp"] = str(now_ms)
@@ -425,97 +424,106 @@ def real_history():
             r = requests.get(f"{url}?{q}&signature={sig}", headers=headers, proxies=proxies, timeout=15)
             return r
 
-        # income
-        r = _signed_get("https://fapi.binance.com/fapi/v1/income", {"startTime": str(start_ms), "limit": "1000"})
-        incomes = r.json() if r.status_code == 200 else []
+        # Fetch userTrades (获取所有平仓)
+        r = _signed_get("https://fapi.binance.com/fapi/v1/userTrades",
+                        {"startTime": str(start_ms), "limit": "1000"})
+        user_trades = r.json() if r.status_code == 200 else []
+        if not isinstance(user_trades, list):
+            return jsonify({"error": "invalid response", "trades": [], "total": 0})
 
-        # userTrades (filled trades with prices)
-        r2 = _signed_get("https://fapi.binance.com/fapi/v1/userTrades", {"startTime": str(start_ms), "limit": "1000"})
-        user_trades = r2.json() if r2.status_code == 200 else []
-
-        # Group userTrades by symbol+time to form round-trip trades
-        # income has REALIZED_PNL per symbol close
-        by_sym_income = {}
-        for inc in incomes:
-            if not isinstance(inc, dict):
-                continue
-            sym = inc.get("symbol", "")
-            it = inc.get("incomeType", "")
-            if sym not in by_sym_income:
-                by_sym_income[sym] = {"realized": 0.0, "commission": 0.0, "funding": 0.0, "ts": 0}
-            ts = inc.get("time", 0)
-            if ts > by_sym_income[sym]["ts"]:
-                by_sym_income[sym]["ts"] = ts
-            if it == "REALIZED_PNL":
-                by_sym_income[sym]["realized"] += float(inc.get("income", 0))
-            elif it == "COMMISSION":
-                by_sym_income[sym]["commission"] += float(inc.get("income", 0))
-            elif it == "FUNDING_FEE":
-                by_sym_income[sym]["funding"] += float(inc.get("income", 0))
-
-        # Build trade list from incomes + userTrades pairing
-        # Group userTrades by symbol+positionSide
+        # 只取平仓记录（SELL, 有realizedPnl）
+        # 同时间同symbol的多笔SELL聚合为一条记录（部分平仓）
         from collections import defaultdict
-        buys = defaultdict(lambda: {"qty": 0.0, "cost": 0.0, "trades": 0})
-        sells = defaultdict(lambda: {"qty": 0.0, "value": 0.0, "pnl": 0.0, "trades": 0})
+        close_map = defaultdict(lambda: {"qty": 0.0, "value": 0.0, "pnl": 0.0, "price": 0.0, "ts": 0, "count": 0})
         for ut in user_trades:
             if not isinstance(ut, dict):
                 continue
-            sym = ut.get("symbol", "")
             side = ut.get("side", "")
-            pos_side = ut.get("positionSide", "")
-            key = f"{sym}|{pos_side}"
+            pnl = float(ut.get("realizedPnl", 0))
+            # 只取已平仓的SELL记录（有realizedPnl的）
+            if side != "SELL" or abs(pnl) < 0.0001:
+                continue
+            sym = ut.get("symbol", "")
+            ts = ut.get("time", 0)
             qty = float(ut.get("qty", 0))
             price = float(ut.get("price", 0))
-            val = qty * price
-            pnl = float(ut.get("realizedPnl", 0))
-            if side == "BUY":
-                buys[key]["qty"] += qty
-                buys[key]["cost"] += val
-                buys[key]["trades"] += 1
-            elif side == "SELL":
-                sells[key]["qty"] += qty
-                sells[key]["value"] += val
-                sells[key]["pnl"] += pnl
-                sells[key]["trades"] += 1
+            # 按symbol+时间戳分组（同一秒内的合并为一条）
+            key = f"{sym}|{ts}"
+            c = close_map[key]
+            c["qty"] += qty
+            c["value"] += qty * price
+            c["pnl"] += pnl
+            c["ts"] = ts
+            c["sym"] = sym
+            c["count"] += 1
 
+        # 获取最近一笔BUY作为入场价
+        buy_map = {}
+        for ut in user_trades:
+            if not isinstance(ut, dict) or ut.get("side") != "BUY":
+                continue
+            sym = ut.get("symbol", "")
+            ts = ut.get("time", 0)
+            qty = float(ut.get("qty", 0))
+            price = float(ut.get("price", 0))
+            key = f"{sym}|{ts // 10000}"  # 按10秒窗口分组
+            if key not in buy_map or ts > buy_map[key]["ts"]:
+                buy_map[key] = {"ts": ts, "qty": qty, "price": price, "sym": sym}
+
+        # 获取income记录匹配手续费和资金费
+        r2 = _signed_get("https://fapi.binance.com/fapi/v1/income",
+                         {"startTime": str(start_ms), "limit": "1000"})
+        incomes = r2.json() if r2.status_code == 200 else []
+        # 按symbol+日期聚合手续费和资金费
+        comm_by_sym_day = defaultdict(float)
+        fund_by_sym_day = defaultdict(float)
+        for inc in incomes:
+            if not isinstance(inc, dict):
+                continue
+            it = inc.get("incomeType", "")
+            val = float(inc.get("income", 0))
+            sym = inc.get("symbol", "")
+            day = time.strftime("%Y-%m-%d", time.gmtime(inc.get("time", 0) / 1000))
+            sd = f"{sym}|{day}"
+            if it == "COMMISSION":
+                comm_by_sym_day[sd] += val
+            elif it == "FUNDING_FEE":
+                fund_by_sym_day[sd] += val
+
+        # 构建交易列表
         trades = []
-        for sym, aggr in by_sym_income.items():
+        for key, c in sorted(close_map.items(), key=lambda x: x[1]["ts"]):
+            sym = c["sym"]
             if symbol_filter and symbol_filter not in sym:
                 continue
-            realized = aggr["realized"]
-            commission = aggr["commission"]
-            funding = aggr["funding"]
-            net = realized + commission + funding
-            ts = aggr["ts"]
-            time_str = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(ts / 1000))
+            avg_price = c["value"] / c["qty"] if c["qty"] > 0 else 0
+            day = time.strftime("%Y-%m-%d", time.gmtime(c["ts"] / 1000))
+            sd = f"{sym}|{day}"
+            commission = comm_by_sym_day.get(sd, 0.0)
+            funding = fund_by_sym_day.get(sd, 0.0)
+            net = c["pnl"] + commission + funding
 
-            # Get entry/exit prices from userTrades
-            long_key = f"{sym}|LONG"
+            # 找入场价
             entry_price = None
-            exit_price = None
-            qty = 0
-            if long_key in buys and buys[long_key]["qty"] > 0:
-                entry_price = round(buys[long_key]["cost"] / buys[long_key]["qty"], 6)
-                qty = int(buys[long_key]["qty"])
-            if long_key in sells and sells[long_key]["qty"] > 0:
-                exit_price = round(sells[long_key]["value"] / sells[long_key]["qty"], 6)
-                qty = max(qty, int(sells[long_key]["qty"]))
+            for bk, bv in sorted(buy_map.items(), key=lambda x: x[1]["ts"], reverse=True):
+                if bv["sym"] == sym and bv["ts"] < c["ts"]:
+                    entry_price = bv["price"]
+                    break
 
             trades.append({
                 "symbol": sym.replace("USDT", ""),
-                "entry_price": entry_price,
-                "exit_price": exit_price,
-                "qty": qty,
-                "realizedPnl": round(realized, 4),
+                "entry_price": round(entry_price, 6) if entry_price else None,
+                "exit_price": round(avg_price, 6),
+                "qty": int(c["qty"]),
+                "realizedPnl": round(c["pnl"], 4),
                 "commission": round(commission, 4),
                 "funding": round(funding, 4),
                 "netPnl": round(net, 4),
-                "time": time_str,
-                "ts": ts,
+                "time": time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(c["ts"] / 1000)),
+                "ts": c["ts"],
             })
 
-        # Sort by time descending
+        # 按时间倒序
         trades.sort(key=lambda t: t["ts"], reverse=True)
 
         total = len(trades)
