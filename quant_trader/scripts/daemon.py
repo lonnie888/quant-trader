@@ -833,6 +833,20 @@ async def _force_close_all_on_circuit(broker, positions_path=None):
 
 
 async def main():
+    # 单例检查：kill 旧 daemon 进程
+    import os
+    my_pid = os.getpid()
+    try:
+        output = os.popen(f"pgrep -f 'quant_trader.scripts.daemon' | grep -v {my_pid}").read().strip()
+        if output:
+            for pid in output.split():
+                pid = pid.strip()
+                if pid and pid.isdigit():
+                    os.system(f"kill {pid} 2>/dev/null")
+                    log.warning("killed old daemon PID %s", pid)
+    except Exception:
+        pass
+
     settings = load_settings()
     ws = FapiWS()
 
