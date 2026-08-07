@@ -49,12 +49,10 @@ _CIRCUIT_BROKEN_DATE: str = ""  # UTC date string when circuit broke
 _CIRCUIT_SESSION_START: float = 0.0  # timestamp when daemon started (in UTC seconds)
 _POSITIONS_PATH = None  # set by _refresh_watchlist on each cycle
 
-def _check_circuit_breaker(settings=None) -> bool:
+def _check_circuit_breaker(settings=None, broker=None) -> bool:
     """Check if daily loss limit has been tripped. Returns True if trading should stop.
-    Only active in demo (real money) mode."""
-    from quant_trader.execution.paper_ledger import (
-        get_all_positions, _today_realized_pnl
-    )
+    Only active in demo (real money) mode.
+    Uses REAL account balance change (not leveraged trade %) to avoid false triggers."""
     from datetime import datetime, timezone
     global _CIRCUIT_BROKEN_DATE
     # Only activate circuit breaker in demo (real money) mode
@@ -65,36 +63,66 @@ def _check_circuit_breaker(settings=None) -> bool:
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     if _CIRCUIT_BROKEN_DATE == today:
         return True  # already tripped today
-    all_events = get_all_positions()
-    # Only count PnL from positions that were closed after this session started
-    import logging as _lg
-    _lg.getLogger(__name__).info("CB: session_start=%s, today=%s", _CIRCUIT_SESSION_START, today)
-    realized = _today_realized_pnl(all_events, today)
-    # Filter: only count trades closed after session start
-    from datetime import datetime, timezone
-    session_start_dt = datetime.fromtimestamp(_CIRCUIT_SESSION_START, tz=timezone.utc) if _CIRCUIT_SESSION_START else None
-    session_realized = 0.0
-    for ev in all_events:
-        if ev.get("status") != "closed": continue
-        exit_ts = ev.get("exit_ts", "")
-        if not exit_ts: continue
-        try:
-            exit_dt = datetime.fromisoformat(exit_ts.replace("Z", "+00:00"))
-            if session_start_dt and exit_dt < session_start_dt: continue
-        except: continue
-        d = exit_dt.strftime("%Y-%m-%d")
-        if d != today: continue
-        pnl = ev.get("pnl_pct_lev", 0.0) or 0.0
-        session_realized += pnl
-    realized = session_realized
-    if realized <= -0.60:  # 60% leveraged loss (allow ~2 SLs before circuit breaker)
-        _CIRCUIT_BROKEN_DATE = today
-        log.warning("=" * 60)
-        log.warning("⚠️  CIRCUIT BREAKER TRIPPED: realized PnL %.2f%% <= -60%%", realized * 100)
-        log.warning("    All open positions will be force-closed")
-        log.warning("    No new trades today (%s)", today)
-        log.warning("=" * 60)
-        return True
+
+    # Use REAL account balance change since session start (robust vs leverage)
+    try:
+        import hmac, hashlib, requests
+        from quant_trader.execution.broker import FAPI_BASE_V2
+        if broker is None or not hasattr(broker, "api_key"):
+            return False
+        ts = int(datetime.now().timestamp() * 1000)
+        params = {"timestamp": str(ts), "recvWindow": "10000"}
+        q = "&".join(f"{k}={v}" for k, v in sorted(params.items()))
+        sig = hmac.new(broker.secret.encode(), q.encode(), hashlib.sha256).hexdigest()
+        proxies = {"http": broker.proxy, "https": broker.proxy} if getattr(broker, "proxy", None) else None
+        r = requests.get(f"{FAPI_BASE_V2}/account?{q}&signature={sig}",
+                         headers={"X-MBX-APIKEY": broker.api_key}, proxies=proxies, timeout=10)
+        if r.status_code != 200:
+            return False
+        acct = r.json()
+        wallet = float(acct.get("totalWalletBalance", 0) or 0)
+        # Session start balance: initial since daemon start
+        initial = getattr(settings, '_session_initial_balance', None)
+        if initial is None:
+            initial = wallet
+            settings._session_initial_balance = wallet
+        # Realized loss % of account equity since session start
+        loss_pct = (wallet - initial) / initial if initial > 0 else 0.0
+        log.info("CB: real balance %.2f vs session-start %.2f (loss %.2f%%)",
+                 wallet, initial, loss_pct * 100)
+        if loss_pct <= -0.60:  # account lost 60% of equity
+            _CIRCUIT_BROKEN_DATE = today
+            log.warning("CIRCUIT BREAKER TRIPPED: account loss %.2f%% <= -60%%", loss_pct * 100)
+            return True
+    except Exception as ex:
+        log.warning("CB: real balance check failed (%s), fallback to paper pnl", ex)
+        # Fallback to paper ledger pnl (scaled)
+        from quant_trader.execution.paper_ledger import get_all_positions
+        all_events = get_all_positions()
+        session_start_dt = datetime.fromtimestamp(_CIRCUIT_SESSION_START, tz=timezone.utc) if _CIRCUIT_SESSION_START else None
+        session_realized = 0.0
+        for ev in all_events:
+            if ev.get("status") != "closed":
+                continue
+            exit_ts = ev.get("exit_ts", "")
+            if not exit_ts:
+                continue
+            try:
+                exit_dt = datetime.fromisoformat(exit_ts.replace("Z", "+00:00"))
+                if session_start_dt and exit_dt < session_start_dt:
+                    continue
+            except Exception:
+                continue
+            d = exit_dt.strftime("%Y-%m-%d")
+            if d != today:
+                continue
+            # Scale leveraged % by margin fraction (20% of equity) to get account-level impact
+            pnl_lev = ev.get("pnl_pct_lev", 0.0) or 0.0
+            session_realized += pnl_lev * 0.20  # each position uses 20% equity
+        if session_realized <= -0.60:
+            _CIRCUIT_BROKEN_DATE = today
+            log.warning("CIRCUIT BREAKER TRIPPED (paper fallback): loss %.2f%% <= -60%%", session_realized * 100)
+            return True
     return False
 
 async def _refresh_watchlist(broker, settings, top_n: int = 30,
@@ -115,7 +143,7 @@ async def _refresh_watchlist(broker, settings, top_n: int = 30,
             log.info("watchlist refreshed: %d symbols", len(syms_ccxt))
 
             # CIRCUIT BREAKER CHECK: skip the whole strategy loop if daily loss exceeded
-            if _check_circuit_breaker(settings):
+            if _check_circuit_breaker(settings, broker):
                 log.warning("circuit breaker active: skipping this watchlist cycle")
                 await _force_close_all_on_circuit(broker, positions_path)
                 # Still send a feishu card to notify user
@@ -289,7 +317,7 @@ async def _refresh_watchlist(broker, settings, top_n: int = 30,
                         else:
                             pass  # enter failed, log already emitted by broker
             # CIRCUIT BREAKER CHECK: if daily loss exceeded, skip new trades
-            if _check_circuit_breaker(settings):
+            if _check_circuit_breaker(settings, broker):
                 log.warning("circuit breaker active: skipping new entries this cycle")
                 # Force close all open positions
                 await _force_close_all_on_circuit(broker, positions_path)
