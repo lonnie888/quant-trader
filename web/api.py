@@ -259,10 +259,11 @@ def real_summary():
         history = load_history()
 
         # Compute today's realized PnL
+        import calendar
         today = time.strftime("%Y-%m-%d", time.gmtime())
         today_realized = 0.0
         ts = int(time.time() * 1000)
-        start_of_day = int(time.mktime(time.strptime(today, "%Y-%m-%d"))) * 1000
+        start_of_day = calendar.timegm(time.strptime(today, "%Y-%m-%d")) * 1000
         params = {"timestamp": str(ts), "recvWindow": "10000", "limit": "500", "startTime": str(start_of_day)}
         q = "&".join(f"{k}={v}" for k, v in sorted(params.items()))
         sig = hmac.new(api_secret.encode(), q.encode(), hashlib.sha256).hexdigest()
