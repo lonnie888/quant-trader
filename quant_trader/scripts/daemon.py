@@ -797,7 +797,7 @@ async def _sync_demo_positions_on_startup(broker):
                     params = {"symbol": sym, "timestamp": str(ts), "recvWindow": "10000"}
                     q = "&".join(f"{k}={v}" for k,v in sorted(params.items()))
                     sig = hmac.new(broker.secret.encode(), q.encode(), hashlib.sha256).hexdigest()
-                    _req.delete(f"{FAPI_BASE}/algoOpenOrders?{q}&signature={sig}", headers={"X-MBX-APIKEY": broker.api_key}, proxies=proxies, timeout=10)
+                    _req.delete(f"{FAPI_BASE}/openOrders?{q}&signature={sig}", headers={"X-MBX-APIKEY": broker.api_key}, proxies=proxies, timeout=10)
                 except Exception:
                     pass
         if closed:

@@ -370,7 +370,7 @@ class DemoBroker(BaseBroker):
                 try:
                     # 取消所有算法单（SL/TP）先
                     try:
-                        self._delete("algoOpenOrders", {"symbol": api_sym})
+                        self._delete("openOrders", {"symbol": api_sym})
                         log.info("demo cancelled algo orders %s", api_sym)
                     except Exception as ex:
                         log.warning("demo cancel algo orders failed %s: %s", api_sym, ex)
