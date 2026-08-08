@@ -298,7 +298,7 @@ async def _refresh_watchlist(broker, settings, top_n: int = 30,
                 # 拉新失败则跳过该币种（缓存数据可能不包含最新价格，导致追高）
                 if df is None or df.empty or len(df) < 100:
                     continue
-                if _is_cooldown(sym):
+                if _is_cooldown(sym.split("/")[0].split(":")[0]):
                     continue
                 for name, params, strat in instances:
                     try:
