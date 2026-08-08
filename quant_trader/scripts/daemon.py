@@ -894,6 +894,17 @@ async def main():
         try:
             ev = closed
             sym_short = ev.get("symbol", "").split("/")[0].split(":")[0]
+            # 检查实盘是否真的有该持仓（避免 paper 残留发通知）
+            try:
+                from quant_trader.execution.real_account import get_realtime_summary
+                real = get_realtime_summary(broker.api_key, broker.secret, broker.proxy)
+                real_syms = [p["symbol"] for p in real.get("positions", [])]
+                api_sym = sym_short + "USDT"
+                if api_sym not in real_syms:
+                    log.info("跳过平仓通知: %s 不在实盘持仓中", api_sym)
+                    return
+            except Exception:
+                pass  # 查不到就继续发通知
             if ev.get("exit_reason") == "stop_loss":
                 _add_cooldown(sym_short)
             # 先发飞书通知（即使 broker.exit 失败也要通知）
