@@ -124,10 +124,10 @@ class DemoBroker(BaseBroker):
                         total_equity = float(snap.get("totalWalletBalance", free))
                     else:
                         total_equity = free
-                    margin = max(total_equity * 0.10, 3.0)  # 10% of equity, min 3 USDT
+                    margin = max(total_equity * 0.10, 1.0)  # 10% of equity, min 1 USDT
                     margin = min(margin, total_equity * 0.50)  # never more than 50%
                 except Exception:
-                    margin = 3.0  # fallback
+                    margin = 1.0  # fallback
             else:
                 margin = 1000.0
             if free < margin:
