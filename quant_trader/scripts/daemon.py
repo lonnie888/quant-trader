@@ -322,10 +322,10 @@ async def _refresh_watchlist(broker, settings, top_n: int = 30,
                         pump_window = 12
                         pump_threshold = 0.13
                         if len(df) >= pump_window:
-                            # 用最高价/最低价计算泵（保持与回测一致）
+                            # 用最高价/窗口起点收盘价计算泵（避免下影线虚高）
                             win_high = df["high"].iloc[-pump_window:].max()
-                            win_low = df["low"].iloc[-pump_window:].min()
-                            pump_pct = win_high / win_low - 1 if win_low > 0 else 0
+                            base_close = df["close"].iloc[-pump_window]
+                            pump_pct = win_high / base_close - 1 if base_close > 0 else 0
                             if pump_pct < pump_threshold:
                                 log.warning("跳过 %s: 最近12根K线无泵(涨幅%.1f%%<13%%)", sym, pump_pct * 100)
                                 blocked += 1

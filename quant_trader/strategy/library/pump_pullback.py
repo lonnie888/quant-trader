@@ -69,8 +69,8 @@ class PumpPullbackStrategy(Strategy):
             if cur == 0:
                 if i >= pump_window:
                     win_high = high[i - pump_window + 1: i + 1].max()
-                    win_low = low[i - pump_window + 1: i + 1].min()
-                    if win_low > 0 and (win_high / win_low - 1.0) >= pump_threshold:
+                    base_close = close[i - pump_window + 1]  # 窗口起点收盘价作为基准
+                    if base_close > 0 and (win_high / base_close - 1.0) >= pump_threshold:
                         local_idx = i - pump_window + 1 + int(np.argmax(high[i - pump_window + 1: i + 1]))
                         if local_idx > pump_bar_idx:
                             pump_high = win_high
