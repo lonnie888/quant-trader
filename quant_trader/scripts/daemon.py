@@ -397,10 +397,19 @@ async def _refresh_watchlist(broker, settings, top_n: int = 30,
                     gainer_pairs = [(g.symbol.split("/")[0].split(":")[0], float(g.pct_change_24h)) for g in gainers]
                     fw = getattr(settings.notify, "feishu_webhook", None)
                     feishu = FeishuNotifier(webhook_url=fw)
+                    # 统一用真实账户持仓数
+                    real_open = len(get_open_positions(positions_path))
+                    try:
+                        if hasattr(broker, "is_real") and broker.is_real:
+                            from quant_trader.execution.real_account import get_realtime_summary
+                            real = get_realtime_summary(broker.api_key, broker.secret, broker.proxy)
+                            real_open = real.get("positionCount", real_open)
+                    except Exception:
+                        pass
                     card = FeishuCardBuilder.make_daily_summary(
                         as_of=today, gainers=gainer_pairs,
                         accepted=opened, blocked=blocked,
-                        open_pos=len(get_open_positions(positions_path)),
+                        open_pos=real_open,
                         opened_symbols=opened_syms,
                         blocked_list=blocked_list,
                     )
