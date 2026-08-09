@@ -18,6 +18,7 @@ class SLTPWatch:
     def __init__(self, on_close=None):
         self.on_close = on_close
         self._price_tracker: dict[int, dict] = {}  # pos_id -> {"min": price, "max": price}
+        self._processed_ids: set = set()  # 已处理过的id，防止重复通知
 
     def on_mark(self, symbol: str, mark_price: float):
         # Always re-read open positions from ledger (avoids stale in-memory state).
@@ -26,13 +27,17 @@ class SLTPWatch:
         for ev in all_events:
             if ev.get("status") in ("closed", "blocked"):
                 closed_ids.add(int(ev["id"]))
-        # Clean up price tracker for closed positions
+        # 合并已处理的id和账本中的closed id
+        all_processed = closed_ids | self._processed_ids
+        # Clean up price tracker and processed ids
         for pid in list(self._price_tracker.keys()):
-            if pid in closed_ids:
+            if pid in all_processed:
                 del self._price_tracker[pid]
+        # 清理已处理的id（账本已经确认closed的可以移除）
+        self._processed_ids -= closed_ids
         live_open = [
             ev for ev in all_events
-            if ev.get("status") == "open" and int(ev["id"]) not in closed_ids
+            if ev.get("status") == "open" and int(ev["id"]) not in all_processed
         ]
         for pos in live_open:
             if pos["symbol"].upper() != symbol.upper():
@@ -111,6 +116,7 @@ class SLTPWatch:
                 "max_adv_pct": max_adv,
             }
             log.info("closed id=%d %s @ %.6f reason=%s", pos_id, symbol, exit_price, exit_reason)
+            self._processed_ids.add(pos_id)
             if self.on_close is not None:
                 try:
                     self.on_close(closed)
