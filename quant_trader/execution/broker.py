@@ -258,6 +258,12 @@ class DemoBroker(BaseBroker):
                     pass
                 return int(q)
 
+            # 保存 algoId 用于后续取消
+            if not hasattr(self, '_algo_ids'):
+                self._algo_ids = {}
+            if api_sym not in self._algo_ids:
+                self._algo_ids[api_sym] = []
+
             def _post_algo(typ: str, trigger: float, qty_arg, suffix: str):
                 # 用 LOT_SIZE step 取整 quantity
                 def _step_round(q: float) -> int:
@@ -313,8 +319,13 @@ class DemoBroker(BaseBroker):
                         return
                     params["quantity"] = str(qty_rounded)
                 try:
-                    self._post("algoOrder", params)
-                    log.info("demo %s %s @ %s (qty=%s)", suffix, api_sym, params["triggerPrice"], qty_arg)
+                    resp = self._post("algoOrder", params)
+                    aid = resp.get("algoId") or resp.get("clientAlgoId", "")
+                    if aid:
+                        self._algo_ids[api_sym].append(aid)
+                        log.info("demo %s %s @ %s (qty=%s, aid=%s)", suffix, api_sym, params["triggerPrice"], qty_arg, aid)
+                    else:
+                        log.info("demo %s %s @ %s (qty=%s)", suffix, api_sym, params["triggerPrice"], qty_arg)
                 except Exception as ex:
                     log.warning("demo %s failed %s: %s (daemon will monitor)", suffix, api_sym, ex)
 
@@ -368,12 +379,20 @@ class DemoBroker(BaseBroker):
                 sym = pos["symbol"]
                 api_sym = sym.split("/")[0].split(":")[0] + "USDT"
                 try:
-                    # 取消所有算法单（SL/TP）先
+                    # 取消所有算法单（SL/TP）先 - 用保存的 algoId
+                    if hasattr(self, '_algo_ids') and api_sym in self._algo_ids:
+                        for aid in self._algo_ids[api_sym]:
+                            try:
+                                self._delete("algoOrder", {"algoId": aid})
+                                log.info("demo cancelled algo %s aid=%s", api_sym, aid)
+                            except Exception as ex:
+                                log.warning("demo cancel algo %s aid=%s: %s", api_sym, aid, ex)
+                        self._algo_ids[api_sym].clear()
+                    # 额外用 openOrders 兜底（取消可能残留的普通挂单）
                     try:
                         self._delete("openOrders", {"symbol": api_sym})
-                        log.info("demo cancelled algo orders %s", api_sym)
-                    except Exception as ex:
-                        log.warning("demo cancel algo orders failed %s: %s", api_sym, ex)
+                    except Exception:
+                        pass
                     # 从 demo 真实仓位读取 qty（避免反推误差）
                     actual_qty = 0
                     try:
