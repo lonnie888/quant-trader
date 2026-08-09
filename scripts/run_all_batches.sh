@@ -4,7 +4,7 @@ cd /vol1/1000/quant_trader
 EQUITY=10.0
 MAX_CONCURRENT=${1:-3}
 MARGIN=${2:-0.20}
-LABEL="mc${MAX_CONCURRENT}_mp${MARGIN}"
+LABEL="mc${MAX_CONCURRENT}_mp${MARGIN}_be"
 echo "max_concurrent=$MAX_CONCURRENT margin_pct=$MARGIN"
 echo "" > "reports/paper/sim_${LABEL}_all.txt"
 

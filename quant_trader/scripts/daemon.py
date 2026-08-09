@@ -1027,6 +1027,46 @@ async def main():
             _supervised("real_equity", lambda: _real_equity_loop()), name="real_equity"
         ))
 
+    # 定期同步实盘持仓和paper账本（清理残留条件单）
+    if hasattr(broker, "is_real") and broker.is_real:
+        async def _real_sync_loop():
+            from quant_trader.execution.real_account import get_realtime_summary
+            from quant_trader.execution.paper_ledger import get_all_positions, close_position
+            from pathlib import Path
+            while not stop_event.is_set():
+                await asyncio.sleep(900)
+                try:
+                    real = get_realtime_summary(broker.api_key, broker.secret, broker.proxy)
+                    real_syms = {p["symbol"] for p in real.get("positions", [])}
+                    ppath = Path("reports/paper/positions.jsonl")
+                    all_events = get_all_positions(ppath)
+                    closed_ids = set()
+                    for ev in all_events:
+                        if ev.get("status") in ("closed", "blocked"):
+                            closed_ids.add(int(ev["id"]))
+                    for ev in all_events:
+                        if ev.get("status") != "open":
+                            continue
+                        if int(ev["id"]) in closed_ids:
+                            continue
+                        api_sym = ev["symbol"].split("/")[0].split(":")[0] + "USDT"
+                        if api_sym not in real_syms:
+                            log.info("sync: 清理paper残留 %s id=%d", api_sym, ev["id"])
+                            close_position(int(ev["id"]), exit_ts=datetime.now(timezone.utc).isoformat(),
+                                           exit_price=float(ev.get("entry_price", 0)),
+                                           exit_reason="real_sync", log_path=ppath)
+                            # 取消条件单
+                            try:
+                                broker.exit(position_id=0, exit_ts=datetime.now(timezone.utc).isoformat(),
+                                            exit_price=0, exit_reason="real_sync", log_path=ppath)
+                            except Exception:
+                                pass
+                except Exception as ex:
+                    log.warning("real_sync failed: %s", ex)
+        tasks.append(asyncio.create_task(
+            _supervised("real_sync", lambda: _real_sync_loop()), name="real_sync"
+        ))
+
     # Sync demo with paper ledger on startup (close orphaned positions)
     await _sync_demo_positions_on_startup(broker)
 
