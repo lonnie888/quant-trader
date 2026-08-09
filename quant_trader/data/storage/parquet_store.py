@@ -22,17 +22,14 @@ class ParquetStore:
     def save(self, symbol: str, timeframe: str, df: pd.DataFrame) -> None:
         if df is None or df.empty:
             return
-        path = self._path(symbol, timeframe)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        # Merge with existing data: keep newest per timestamp
-        if path.exists():
-            existing = pd.read_parquet(path)
-            combined = pd.concat([existing, df])
-            combined = combined[~combined.index.duplicated(keep="last")]
-            combined.sort_index(inplace=True)
-            combined.to_parquet(path)
-        else:
+        try:
+            path = self._path(symbol, timeframe)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            # 直接覆盖写入（不合并），提高稳定性
             df.to_parquet(path)
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning("store save failed %s/%s: %s", symbol, timeframe, e)
 
     def load(self, symbol: str, timeframe: str) -> pd.DataFrame:
         path = self._path(symbol, timeframe)
