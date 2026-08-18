@@ -28,6 +28,8 @@ from quant_trader.data.realtime.ws_client import FapiWS, stream_kline  # noqa: E
 from quant_trader.data.realtime.kline_strategy import KlineStrategyLoop  # noqa: E402
 from quant_trader.data.realtime.sltp_watch import SLTPWatch  # noqa: E402
 from quant_trader.data.fetcher.gainers_scanner import scan_gainers  # noqa: E402
+from quant_trader.strategy.market_filter import MarketFilter  # noqa: E402
+from quant_trader.data.storage.parquet_store import ParquetStore  # noqa: E402
 from quant_trader.data.fetcher.binance_client import BinanceClient  # noqa: E402
 
 logging.basicConfig(
@@ -96,6 +98,9 @@ def _add_cooldown(sym_short: str, hours: int = 24):
 _CIRCUIT_BROKEN_DATE: str = ""  # UTC date string when circuit broke
 _CIRCUIT_SESSION_START: float = 0.0  # timestamp when daemon started (in UTC seconds)
 _POSITIONS_PATH = None  # set by _refresh_watchlist on each cycle
+
+# 模块级共享变量：最新涨幅榜数据（供飞书卡片使用）
+_LATEST_GAINERS: list = []  # [(symbol_short, pct_24h)]
 
 def _check_circuit_breaker(settings=None, broker=None) -> bool:
     """Check if daily loss limit has been tripped. Returns True if trading should stop.
@@ -173,265 +178,210 @@ def _check_circuit_breaker(settings=None, broker=None) -> bool:
             return True
     return False
 
-async def _refresh_watchlist(broker, settings, top_n: int = 30,
+async def _refresh_watchlist(broker, settings, kline_loop=None, top_n: int = 50,
                              refresh_event: asyncio.Event | None = None):
-    """Periodic task: refresh watchlist from gainers scanner and run strategy."""
+    """Periodic task: scan top-N gainers, update WS subscription.
+    Strategy execution is handled by WS kline loop (real-time, on bar close)."""
+    # 主流币/中文币：pump 信号少或无法下单，排除
+    MAINSTREAM = {
+        "比特币", "币安人生", "我踏马来了", "龙虾",
+    }
     while True:
         try:
+            from quant_trader.data.fetcher.gainers_scanner import scan_gainers
+            from quant_trader.data.fetcher.binance_client import BinanceClient
             client = BinanceClient(api_key="", api_secret="", testnet=False)
             try:
                 gainers = scan_gainers(client, quote="USDT", top_n=top_n,
                                        min_quote_volume_24h=20_000_000)
             finally:
                 client.close()
-            syms_ccxt = [g.symbol for g in gainers]
+            # 过滤中文币种
+            syms_ccxt = [g.symbol for g in gainers
+                         if all(ord(c) < 128 for c in g.symbol)]
             if not syms_ccxt:
                 await asyncio.sleep(900)
                 continue
             log.info("watchlist refreshed: %d symbols", len(syms_ccxt))
 
-            # CIRCUIT BREAKER CHECK: skip the whole strategy loop if daily loss exceeded
+            # 更新共享涨幅榜数据（供飞书卡片使用）
+            global _LATEST_GAINERS
+            _LATEST_GAINERS = [(g.symbol.split("/")[0].split(":")[0], float(g.pct_change_24h)) for g in gainers
+                               if all(ord(c) < 128 for c in g.symbol)]
+
+            # 更新 WS 订阅列表（新增的币种自动拉历史数据 + 补扫）
+            if kline_loop is not None and syms_ccxt:
+                # 转换为 WS 订阅格式（如 TUTUSDT）
+                ws_symbols = [s.split("/")[0].split(":")[0] + "USDT" for s in syms_ccxt]
+                await kline_loop.update_subscription(ws_symbols)
+
+            # 熔断器检查（熔断时通知飞书，不清仓）
+            global _POSITIONS_PATH
+            _POSITIONS_PATH = Path("reports/paper/positions.jsonl")
             if _check_circuit_breaker(settings, broker):
-                log.warning("circuit breaker active: skipping this watchlist cycle")
-                await _force_close_all_on_circuit(broker, positions_path)
-                # Still send a feishu card to notify user
-                try:
-                    from quant_trader.execution.notifier import FeishuNotifier, FeishuCardBuilder
-                    fw = getattr(settings.notify, "feishu_webhook", None)
-                    feishu = FeishuNotifier(webhook_url=fw)
-                    gainer_pairs = [(g.symbol.split("/")[0].split(":")[0], float(g.pct_change_24h)) for g in gainers]
-                    card = FeishuCardBuilder.make_daily_summary(
-                        as_of=datetime.now(timezone.utc).strftime("%Y-%m-%d"),
-                        gainers=gainer_pairs,
-                        accepted=0, blocked=0,
-                        open_pos=0,
-                        opened_symbols=[],
-                        blocked_list=[("⚠️ 熔断器", "今日亏损达限，已暂停交易")],
-                    )
-                    feishu.send_card(card)
-                except Exception:
-                    pass
+                log.warning("circuit breaker active: skipping this cycle")
                 if refresh_event is not None:
                     refresh_event.set()
                 await asyncio.sleep(900)
                 continue
 
-            # 当前循环已开仓的币种（防止同一循环内重复开单）
-            _cycle_opened_syms: set = set()
-            
-            # Run strategy on each symbol
-            from quant_trader.strategy.generator.auto_strategy import generate_instances
-            from quant_trader.execution.paper_ledger import get_all_positions, get_open_positions, open_position, _has_open, evaluate_risk
-            from quant_trader.data.storage.parquet_store import ParquetStore
-            from datetime import datetime, timezone, timedelta
-
-            instances = generate_instances("config/strategies.yaml")
-            positions_path = Path("reports/paper/positions.jsonl")
-            # Global reference for circuit breaker
-            global _POSITIONS_PATH
-            _POSITIONS_PATH = positions_path
-            risk_cfg = settings.risk
-            risk_check = {
-                "initial_capital": float(settings.backtest.initial_capital),
-                "max_position_pct": float(risk_cfg.max_position_pct),
-                "max_total_exposure": float(risk_cfg.max_total_exposure),
-                "max_concurrent": int(risk_cfg.max_concurrent),
-            }
-            today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-            opened = 0
-            opened_syms = []
-            blocked = 0
-            blocked_list = []
-            now = datetime.now(timezone.utc)
-
-            # 1h cooldown for timeout exits
-            cooldown_syms = set()
-            for ev in get_all_positions(positions_path):
-                if ev.get("status") == "closed" and ev.get("exit_reason") == "time":
-                    ts = ev.get("exit_ts")
-                    if ts:
-                        try:
-                            dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
-                            if (now - dt).total_seconds() < 3600:
-                                cooldown_syms.add(ev["symbol"])
-                        except Exception:
-                            pass
-
-            store = ParquetStore(settings.data.storage_dir)
-            FAPI_KLINE = "https://fapi.binance.com/fapi/v1/klines"
-
-            for sym in syms_ccxt:
-                if sym in cooldown_syms:
-                    continue
-                if _has_open(get_all_positions(positions_path), sym):
-                    continue
-
-                # 每次都拉新数据，确保策略基于最新行情判断
-                df = None
-                now = datetime.now(timezone.utc)
-                api_sym = sym.split("/")[0].split(":")[0] + "USDT"
-                try:
-                    start_ms = int((now - timedelta(days=7)).timestamp() * 1000)
-                    end_ms = int(now.timestamp() * 1000)
-                    url = f"{FAPI_KLINE}?symbol={api_sym}&interval=15m&startTime={start_ms}&endTime={end_ms}&limit=1000"
-                    import requests as _rq
-                    r = _rq.get(url, timeout=30)
-                    r.raise_for_status()
-                    raw = r.json()
-                    if raw:
-                        import pandas as _pd
-                        _rows = []
-                        for row in raw:
-                            _rows.append({
-                                "timestamp": int(row[0]), "open": float(row[1]),
-                                "high": float(row[2]), "low": float(row[3]),
-                                "close": float(row[4]), "volume": float(row[5]),
-                            })
-                        _df = _pd.DataFrame(_rows)
-                        _df["timestamp"] = _pd.to_datetime(_df["timestamp"], unit="ms", utc=True)
-                        _df = _df.set_index("timestamp")
-                        store.save(sym, "15m", _df)
-                        df = _df
-                except Exception as ex:
-                    log.warning("下载K线失败 %s: %s, 跳过该币种", api_sym, ex)
-
-                # 拉新失败则跳过该币种（缓存数据可能不包含最新价格，导致追高）
-                if df is None or df.empty or len(df) < 100:
-                    continue
-                if _is_cooldown(sym.split("/")[0].split(":")[0]):
-                    continue
-                for name, params, strat in instances:
-                    try:
-                        sigs = strat.generate_signals(df)
-                    except Exception:
-                        continue
-                    if sigs.empty:
-                        continue
-                    s = sigs.values
-                    last_entry = -1
-                    prev = 0
-                    for i, v in enumerate(s):
-                        if v == 1 and prev == 0:
-                            last_entry = i
-                        prev = v
-                    if s[-1] == 1 and last_entry >= 0:
-                                            # 回测等价行为：信号触发立即开单（有_has_open防重复）
-                                            # 不回测：顺序遍历，0→1时开仓，持仓中_has_open跳过
-                                                                    # 额外检查：最近12根K线内必须有 ≥13% 的泵
-                        # 防止"持仓延续"信号在下跌趋势中误开仓
-                        pump_window = 12
-                        pump_threshold = 0.13
-                        if len(df) >= pump_window:
-                            # 用最高价/窗口起点收盘价计算泵（避免下影线虚高）
-                            win_high = df["high"].iloc[-pump_window:].max()
-                            base_close = df["close"].iloc[-pump_window]
-                            pump_pct = win_high / base_close - 1 if base_close > 0 else 0
-                            if pump_pct < pump_threshold:
-                                log.warning("跳过 %s: 最近12根K线无泵(涨幅%.1f%%<13%%)", sym, pump_pct * 100)
-                                blocked += 1
-                                blocked_list.append((sym.split("/")[0].split(":")[0], f"无泵(涨幅{pump_pct*100:.1f}%)"))
-                                continue
-                        # 用最新已收盘 K 线收盘价开单，与回测一致
-                        # 实时 ticker 价格可能已偏离信号 K 线，造成追高
-                        entry_price = float(df.iloc[-1]["close"])
-                        now_ts = datetime.now(timezone.utc).isoformat()
-                        all_events = get_all_positions(positions_path)
-                        # 检查是否已有同币种持仓（防止重复开单）
-                        from quant_trader.execution.paper_ledger import _has_open
-                        if sym in _cycle_opened_syms or _has_open(all_events, sym):
-                            log.info("跳过 %s: 已有同币种持仓", sym)
-                            blocked += 1
-                            blocked_list.append((sym.split("/")[0].split(":")[0], "已有持仓"))
-                            continue
-                        # 实盘模式下，优先用真实账户持仓数判断上限
-                        if hasattr(broker, "is_real") and broker.is_real:
-                            try:
-                                from quant_trader.execution.real_account import get_realtime_summary
-                                real = get_realtime_summary(broker.api_key, broker.secret, broker.proxy)
-                                real_pos_count = real.get("positionCount", 0)
-                                max_conc = int(risk_check.get("max_concurrent", 3))
-                                if real_pos_count >= max_conc:
-                                    allowed = False
-                                    reason = "max_concurrent"
-                                    log.info("实盘已达持仓上限(%d), 跳过 %s", real_pos_count, sym)
-                                else:
-                                    allowed = True  # 覆盖paper账本的检查
-                                    reason = ""
-                            except Exception:
-                                # fallback: 用paper账本检查
-                                allowed, reason = evaluate_risk(all_events, **risk_check)
-                        else:
-                            allowed, reason = evaluate_risk(all_events, **risk_check)
-                        if not allowed:
-                            blocked += 1
-                            reason_zh = {
-                                "max_concurrent": "已达持仓上限",
-                                "max_total_exposure": "总敞口超限",
-                            }.get(reason, reason)
-                            blocked_list.append((sym.split("/")[0].split(":")[0], reason_zh))
-                            continue
-                        ev = broker.enter(
-                            symbol=sym, strategy=name, params=params,
-                            entry_ts=now_ts, entry_price=entry_price,
-                            leverage=float(settings.backtest.leverage),
-                            open_day=today, log_path=positions_path,
-                            risk_check=risk_check,
-                        )
-                        if ev is not None and ev.status == "open":
-                            opened += 1
-                            opened_syms.append(sym.split("/")[0].split(":")[0])
-                            _cycle_opened_syms.add(sym)
-                            log.info("✅ [watchlist] open %s @ %.6f id=%d", sym, entry_price, ev.id)
-                        else:
-                            pass  # enter failed, log already emitted by broker
-            # CIRCUIT BREAKER CHECK: if daily loss exceeded, skip new trades
-            if _check_circuit_breaker(settings, broker):
-                log.warning("circuit breaker active: skipping new entries this cycle")
-                # Force close all open positions
-                await _force_close_all_on_circuit(broker, positions_path)
-                if opened == 0:
-                    pass  # fall through to next cycle
-            if opened > 0 or blocked > 0:
-                try:
-                    from quant_trader.execution.notifier import FeishuNotifier, FeishuCardBuilder
-                    gainer_pairs = [(g.symbol.split("/")[0].split(":")[0], float(g.pct_change_24h)) for g in gainers]
-                    fw = getattr(settings.notify, "feishu_webhook", None)
-                    feishu = FeishuNotifier(webhook_url=fw)
-                    # 统一用真实账户持仓数
-                    real_open = len(get_open_positions(positions_path))
-                    try:
-                        if hasattr(broker, "is_real") and broker.is_real:
-                            from quant_trader.execution.real_account import get_realtime_summary
-                            real = get_realtime_summary(broker.api_key, broker.secret, broker.proxy)
-                            real_open = real.get("positionCount", real_open)
-                    except Exception:
-                        pass
-                    card = FeishuCardBuilder.make_daily_summary(
-                        as_of=today, gainers=gainer_pairs,
-                        accepted=opened, blocked=blocked,
-                        open_pos=real_open,
-                        opened_symbols=opened_syms,
-                        blocked_list=blocked_list,
-                    )
-                    feishu.send_card(card)
-                except Exception:
-                    pass
         except Exception as ex:
             log.warning("watchlist refresh failed: %s", ex)
-        # Signal positions_report task that a refresh cycle is complete
         if refresh_event is not None:
             refresh_event.set()
-        # 对齐K线收盘时间（每15分钟整点），收盘后立即检查开单，不固定等900秒
+        # 对齐K线收盘时间
         try:
             import time as _time
             now = _time.time()
-            # 下一个15分钟整点（00:00,00:15,00:30,00:45）
             next_15min = (int(now) // 900 + 1) * 900
-            wait = next_15min - now
+            wait = next_15min - now + 5
             await asyncio.sleep(max(wait, 1))
         except Exception:
             await asyncio.sleep(900)
 
+
+async def _data_health_loop(kline_loop, stop_event, interval: int = 600):
+    """每10分钟检查订阅币种的数据完整性，缺失/过旧则从 Binance 拉取补全。"""
+    import requests as _rq
+    import pandas as _pd
+    from datetime import datetime, timezone, timedelta
+    from pathlib import Path
+    while not stop_event.is_set():
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=interval)
+        except asyncio.TimeoutError:
+            pass
+        if stop_event.is_set():
+            break
+        try:
+            if kline_loop is None or not kline_loop._current_symbols:
+                continue
+            now = datetime.now(timezone.utc)
+            store = kline_loop.store
+            stale = []
+            for sym in kline_loop._current_symbols:
+                store_sym = f"{sym}/USDT:USDT" if not sym.endswith("USDT") else f"{sym[:-4]}/USDT:USDT"
+                sym_full = sym if sym.endswith("USDT") else sym + "USDT"
+                try:
+                    df = store.load(store_sym, "15m")
+                    if df.empty or len(df) < 100:
+                        stale.append((sym_full, "无数据"))
+                        continue
+                    last_time = df.index[-1]
+                    if hasattr(last_time, 'tz') and last_time.tz:
+                        age = (now - last_time).total_seconds() / 60
+                    else:
+                        age = 999
+                    if age > 30:
+                        stale.append((sym_full, f"过旧{age:.0f}分"))
+                except Exception:
+                    continue
+            # 刷新过旧/缺失的币种
+            if stale:
+                log.info("data health: %d 个币种数据待刷新: %s", len(stale), [s[0] for s in stale[:5]])
+                for sym, reason in stale:
+                    try:
+                        start_ms = int((now - timedelta(days=7)).timestamp() * 1000)
+                        end_ms = int(now.timestamp() * 1000)
+                        url = f"https://fapi.binance.com/fapi/v1/klines?symbol={sym}&interval=15m&startTime={start_ms}&endTime={end_ms}&limit=1000"
+                        r = _rq.get(url, timeout=30)
+                        if r.status_code == 200:
+                            raw = r.json()
+                            if raw:
+                                _rows = []
+                                for row in raw:
+                                    _rows.append({"timestamp": int(row[0]), "open": float(row[1]),
+                                                  "high": float(row[2]), "low": float(row[3]),
+                                                  "close": float(row[4]), "volume": float(row[5])})
+                                _df = _pd.DataFrame(_rows)
+                                _df["timestamp"] = _pd.to_datetime(_df["timestamp"], unit="ms", utc=True)
+                                _df = _df.set_index("timestamp")
+                                store_sym2 = f"{sym[:-4]}/USDT:USDT" if sym.endswith("USDT") else sym + "/USDT:USDT"
+                                store.save(store_sym2, "15m", _df)
+                                log.info("data health: %s 已刷新 (%d rows)", sym, len(_df))
+                    except Exception as ex:
+                        log.warning("data health refresh failed %s: %s", sym, ex)
+        except Exception as ex:
+            log.warning("data health loop error: %s", ex)
+
+async def _feishu_signal_loop(settings, stop_event, kline_loop=None):
+    """每15分钟K线收盘时发飞书量化信号卡片（涨幅榜/开仓/风控阻挡）。"""
+    from datetime import datetime, timezone
+    from quant_trader.execution.notifier import FeishuNotifier, FeishuCardBuilder
+    from quant_trader.execution.paper_ledger import get_open_positions, get_all_positions
+    from pathlib import Path
+    while not stop_event.is_set():
+        # 对齐到下一个15分钟整点（xx:00/xx:15/xx:30/xx:45）
+        import time as _time
+        now = _time.time()
+        next_15min = (int(now) // 900 + 1) * 900
+        wait = next_15min - now + 5
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=max(wait, 1))
+        except asyncio.TimeoutError:
+            pass
+        if stop_event.is_set():
+            break
+        try:
+            global _LATEST_GAINERS
+            fw = getattr(settings.notify, "feishu_webhook", None)
+            if not fw or not _LATEST_GAINERS:
+                continue
+            feishu = FeishuNotifier(webhook_url=fw)
+            today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            ppath = Path("reports/paper/positions.jsonl")
+            all_events = get_all_positions(ppath)
+            real_open = len(get_open_positions(ppath))
+
+            # 统计今天开仓/阻挡/平仓
+            opened_syms = set()
+            blocked_list = []
+            today_pnl = 0.0
+            wins = losses = 0
+            for ev in all_events:
+                if not (ev.get("entry_ts") or "").startswith(today):
+                    continue
+                sym = ev["symbol"].split("/")[0]
+                if ev.get("status") == "open":
+                    opened_syms.add(sym)
+                elif ev.get("status") == "blocked":
+                    reason = ev.get("exit_reason", "风控阻挡")
+                    blocked_list.append((sym, reason))
+                elif ev.get("status") == "closed":
+                    pnl = float(ev.get("pnl_pct_lev", 0) or 0)
+                    today_pnl += pnl
+                    if pnl > 0: wins += 1
+                    elif pnl < 0: losses += 1
+
+            # 从 signal_log 获取最近15分钟的信号
+            import time as _time
+            cutoff = _time.time() - 900  # 15分钟前
+            recent_open = []
+            recent_blocked = []
+            if kline_loop and hasattr(kline_loop, 'signal_log'):
+                for ts, sym, action, reason in kline_loop.signal_log:
+                    if ts < cutoff:
+                        continue
+                    if action == "open":
+                        if sym not in recent_open:
+                            recent_open.append(sym)
+                    elif action == "blocked":
+                        if not any(s == sym for s, _ in recent_blocked):
+                            recent_blocked.append((sym, reason))
+
+            # 涨幅榜TOP30
+            gainers = [(s, p) for s, p in _LATEST_GAINERS[:30]]
+
+            card = FeishuCardBuilder.make_daily_summary(
+                as_of=today, gainers=gainers,
+                accepted=len(recent_open), blocked=len(recent_blocked),
+                open_pos=real_open,
+                opened_symbols=recent_open,
+                blocked_list=recent_blocked + [("📊 今日盈亏", f"{today_pnl*100:+.1f}%"), ("🏆 胜/负", f"{wins}/{losses}")],
+            )
+            feishu.send_card(card)
+        except Exception:
+            pass
 
 async def _positions_report_loop(settings, stop_event, watchlist_event: asyncio.Event, broker=None):
     """Send positions check card to Feishu when watchlist refresh completes.
@@ -446,10 +396,10 @@ async def _positions_report_loop(settings, stop_event, watchlist_event: asyncio.
 
     while not stop_event.is_set():
         try:
-            await asyncio.wait_for(watchlist_event.wait(), timeout=300.0)
+            await asyncio.wait_for(watchlist_event.wait(), timeout=900.0)
             watchlist_event.clear()
         except asyncio.TimeoutError:
-            continue
+            pass  # 超时也发一次报告，不依赖 watchlist 刷新
         if stop_event.is_set():
             break
         try:
@@ -879,7 +829,6 @@ async def main():
         pass
 
     settings = load_settings()
-    ws = FapiWS()
 
     # SL/TP watcher (uses REST poll loop for mark price, WS not needed)
     sltp = SLTPWatch()
@@ -942,11 +891,38 @@ async def main():
 
     sltp.on_close = _on_sltp_close
 
-    # Strategy loop on kline close
-    kline_loop = KlineStrategyLoop(ws, settings=settings)
+    # Create brokers (paper + demo dual-run)
+    proxy = getattr(settings, "proxy", None)
+    broker_paper = create_broker(settings, mode="paper")
+    broker_demo = create_broker(settings, mode="demo", proxy=proxy)
+    # TODO: 临时改成 paper 模式，100 USDT 模拟实盘
+    broker_mode = "paper"
+    log.info("broker mode: %s (PAPER 模拟实盘 100 USDT, demo 暂不使用)", broker_mode)
+    broker = broker_paper
 
-    # initial: subscribe to default watchlist 15m kline
-    await kline_loop.subscribe(DEFAULT_WATCHLIST, interval="15m")
+    # Strategy loop on kline close (WebSocket, manages own connection)
+    # Market filter: skip opening when market conditions are bad
+    market_filter = None
+    mf_cfg = getattr(settings, "market_filter", None)
+    if mf_cfg is not None and getattr(mf_cfg, "enabled", True):
+        from pathlib import Path as _P
+        market_filter = MarketFilter(
+            store=ParquetStore(settings.data.storage_dir),
+            vol_threshold=float(getattr(mf_cfg, "volatility_threshold_pct", 12.0)),
+            refresh_seconds=int(getattr(mf_cfg, "refresh_seconds", 14400)),
+            no_weekend=bool(getattr(mf_cfg, "no_weekend", True)),
+            no_bad_hours=bool(getattr(mf_cfg, "no_bad_hours", True)),
+            bad_hours=set(getattr(mf_cfg, "bad_hours_utc", [0, 1, 2, 3, 16, 17, 18, 19])),
+            cache_path=_P(getattr(mf_cfg, "cache_path", "reports/paper/market_state.json")),
+        )
+        log.info(
+            "market filter enabled: vol>%.1f%% 周末+坏时段 filter active",
+            market_filter.vol_threshold,
+        )
+    else:
+        log.info("market filter disabled (config.market_filter.enabled=false or missing)")
+
+    kline_loop = KlineStrategyLoop(settings=settings, broker=broker, market_filter=market_filter)
 
     # Graceful shutdown
     stop_event = asyncio.Event()
@@ -959,15 +935,6 @@ async def main():
             loop.add_signal_handler(sig, _on_signal)
         except NotImplementedError:
             pass
-
-    # Create brokers (paper + demo dual-run)
-    proxy = getattr(settings, "proxy", None)
-    broker_paper = create_broker(settings, mode="paper")
-    broker_demo = create_broker(settings, mode="demo", proxy=proxy)
-    broker_mode = getattr(settings.demo_trading, "mode", "paper")
-    log.info("broker mode: %s (paper+demo dual-run)", broker_mode)
-    # Use paper broker for risk checks, demo for actual orders
-    broker = broker_demo
 
     # SAFETY CHECK: real money account detected
     if hasattr(broker, "is_real") and broker.is_real:
@@ -1008,10 +975,20 @@ async def main():
 
     tasks = [
         asyncio.create_task(_supervised("rest_poll", lambda: _rest_poll_loop(settings, kline_loop, sltp, stop_event)), name="rest_poll"),
-        asyncio.create_task(_supervised("watchlist", lambda: _refresh_watchlist(broker, settings, refresh_event=refresh_event)), name="watchlist"),
+        asyncio.create_task(_supervised("watchlist", lambda: _refresh_watchlist(broker, settings, kline_loop=kline_loop, refresh_event=refresh_event)), name="watchlist"),
         asyncio.create_task(_supervised("daily_recap", lambda: _daily_recap_loop(settings, stop_event)), name="daily_recap"),
+        asyncio.create_task(_supervised("feishu_signal", lambda: _feishu_signal_loop(settings, stop_event, kline_loop=kline_loop)), name="feishu_signal"),
+        asyncio.create_task(_supervised("data_health", lambda: _data_health_loop(kline_loop, stop_event)), name="data_health"),
         asyncio.create_task(_supervised("positions_report", lambda: _positions_report_loop(settings, stop_event, refresh_event, broker)), name="positions_report"),
     ]
+
+    # Market filter periodic refresh (4h by default)
+    if market_filter is not None:
+        async def _market_filter_loop():
+            await market_filter.run_periodic_refresh(stop_event)
+        tasks.append(asyncio.create_task(
+            _supervised("market_filter", lambda: _market_filter_loop()), name="market_filter"
+        ))
 
     # Real account equity tracker (save snapshot every 15 min)
     if hasattr(broker, "is_real") and broker.is_real:
@@ -1075,7 +1052,7 @@ async def main():
         await stop_event.wait()
     finally:
         log.info("stopping daemon...")
-        await ws.stop()
+        await kline_loop.stop()
         for t in tasks:
             t.cancel()
         for t in tasks:

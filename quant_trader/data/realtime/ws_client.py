@@ -21,7 +21,7 @@ import aiohttp
 
 log = logging.getLogger(__name__)
 
-WS_BASE = "wss://fapi.binance.com/ws"
+WS_BASE = "wss://fstream.binance.com/market"
 PROXY = None  # set via settings.yaml proxy field
 
 
@@ -57,8 +57,23 @@ class FapiWS:
             })
             log.info("subscribed: %s", new)
 
+    async def unsubscribe(self, streams: list[str]):
+        """Unsubscribe streams (removes from connection)."""
+        rem = [s for s in streams if s in self.subs]
+        if not rem:
+            return
+        self.subs.difference_update(rem)
+        if self._ws is not None:
+            await self._ws.send_json({
+                "method": "UNSUBSCRIBE",
+                "params": rem,
+                "id": int(asyncio.get_event_loop().time() * 1000) % 100000,
+            })
+            log.info("unsubscribed: %s", rem)
+
     async def _reader(self):
         assert self._ws is not None
+        log.info("[reader] starting")
         try:
             async for msg in self._ws:
                 if self._stop:
@@ -68,11 +83,20 @@ class FapiWS:
                         data = json.loads(msg.data)
                     except json.JSONDecodeError:
                         continue
-                    # Single stream: {"stream":"...","data":{...}}
-                    # Or raw message: direct dict
+                    # 处理 Binance 的 TEXT ping 消息
+                    if "ping" in data:
+                        ts = data["ping"]
+                        log.info("[reader] ping=%s", ts)
+                        await self._ws.send_json({"pong": ts})
+                        continue
+                    # stream 模式：消息为 {"stream":"...","data":{...}}
                     stream = data.get("stream", "")
                     payload = data.get("data", data)
-                    for h in self.handlers.get(stream, []):
+                    # 用 symbol 匹配 handler（stream 名如 "tutusdt@kline_15m"，取前半部分）
+                    sym = payload.get("s", stream.split("@")[0] if stream else "").upper()
+                    if not sym:
+                        log.info("[reader] raw msg: %s", str(data)[:200])
+                    for h in self.handlers.get(sym, []):
                         try:
                             await h(payload)
                         except Exception as e:
@@ -82,37 +106,38 @@ class FapiWS:
                     break
         except Exception as e:
             log.exception("ws reader error: %s", e)
+        log.info("[reader] ended")
 
     async def run(self, stop_event=None):
-        """Main loop: connect, subscribe, read; reconnect on failure."""
+        """Main loop: connect, subscribe, read; reconnect on failure.
+
+        使用 stream 模式 (wss://fstream.binance.com/market/stream?streams=...)，
+        实测 /market/stream 才能收到 K 线数据，/ws 模式收不到。
+        """
         self._session = aiohttp.ClientSession()
         try:
             max_attempts = 3
             backoff = 1.0
             connected = False
-            for attempt in range(1, max_attempts + 1):
-                if self._stop or (stop_event and stop_event.is_set()):
-                    break
+            while not (self._stop or (stop_event and stop_event.is_set())):
                 try:
-                    log.info("connecting to %s (attempt %d/%d, proxy=%s)", WS_BASE, attempt, max_attempts, self.proxy)
-                    kwargs = {"timeout": aiohttp.ClientWSTimeout(ws_close=8.0)}
+                    streams = "/".join(sorted(self.subs))
+                    url = f"{WS_BASE}/stream?streams={streams}" if streams else WS_BASE
+                    log.info("connecting to %s (proxy=%s)", url, self.proxy)
+                    kwargs = {"timeout": aiohttp.ClientWSTimeout(ws_close=8.0), "heartbeat": 20.0}
                     if self.proxy:
                         kwargs["proxy"] = self.proxy
-                    ws = await self._session.ws_connect(WS_BASE, **kwargs)
+                    ws = await self._session.ws_connect(url, **kwargs)
                     self._ws = ws
-                    if self.subs:
-                        await ws.send_json({
-                            "method": "SUBSCRIBE",
-                            "params": list(self.subs),
-                            "id": 1,
-                        })
                     connected = True
                     self._reader_task = asyncio.create_task(self._reader())
                     await self._reader_task
                     break
+                except asyncio.CancelledError:
+                    break
                 except Exception as e:
-                    log.warning("ws connect failed (%d/%d): %s", attempt, max_attempts, e)
-                if not connected and attempt < max_attempts:
+                    log.warning("ws connect failed: %s", e)
+                if not connected:
                     await asyncio.sleep(backoff)
                     backoff = min(backoff * 2, 60.0)
             return connected

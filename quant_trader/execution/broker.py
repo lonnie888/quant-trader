@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import logging
 import time as _time
 from pathlib import Path
@@ -78,6 +79,7 @@ class DemoBroker(BaseBroker):
         self.base_url = (getattr(cfg, "base_url", None) or "https://demo-fapi.binance.com").rstrip("/")
         self.is_real = "demo" not in self.base_url.lower() and "testnet" not in self.base_url.lower()
         self._override_endpoints()
+        self._load_algo_ids()
         log.info("DemoBroker mode: %s (url=%s)", "REAL" if self.is_real else "DEMO", self.base_url)
 
     def _override_endpoints(self):
@@ -323,6 +325,7 @@ class DemoBroker(BaseBroker):
                     aid = resp.get("algoId") or resp.get("clientAlgoId", "")
                     if aid:
                         self._algo_ids[api_sym].append(aid)
+                        self._save_algo_ids()
                         log.info("demo %s %s @ %s (qty=%s, aid=%s)", suffix, api_sym, params["triggerPrice"], qty_arg, aid)
                     else:
                         log.info("demo %s %s @ %s (qty=%s)", suffix, api_sym, params["triggerPrice"], qty_arg)
@@ -388,6 +391,10 @@ class DemoBroker(BaseBroker):
                             except Exception as ex:
                                 log.warning("demo cancel algo %s aid=%s: %s", api_sym, aid, ex)
                         self._algo_ids[api_sym].clear()
+                        self._save_algo_ids()
+                    else:
+                        # fallback: _algo_ids 丢失（如 daemon 重启后）→ 用持久化的 algoId 取消
+                        self._cancel_open_algo_orders(api_sym)
                     # 额外用 openOrders 兜底（取消可能残留的普通挂单）
                     try:
                         self._delete("openOrders", {"symbol": api_sym})
@@ -428,6 +435,47 @@ class DemoBroker(BaseBroker):
 
     def get_positions(self) -> list[dict]:
         return get_open_positions()
+
+    # ---- _algo_ids 持久化（daemon 重启后仍能取消条件单）----
+    _ALGO_IDS_FILE = Path("reports/paper/algo_ids.json")
+
+    def _load_algo_ids(self):
+        try:
+            if self._ALGO_IDS_FILE.exists():
+                data = json.loads(self._ALGO_IDS_FILE.read_text())
+                if isinstance(data, dict):
+                    self._algo_ids = {k: list(v) for k, v in data.items()}
+                    log.info("loaded %d algo_id entries from %s", len(self._algo_ids), self._ALGO_IDS_FILE)
+                    return
+        except Exception as ex:
+            log.warning("load algo_ids failed: %s", ex)
+        self._algo_ids = {}
+
+    def _save_algo_ids(self):
+        try:
+            self._ALGO_IDS_FILE.parent.mkdir(parents=True, exist_ok=True)
+            self._ALGO_IDS_FILE.write_text(json.dumps(self._algo_ids))
+        except Exception as ex:
+            log.warning("save algo_ids failed: %s", ex)
+
+    def _cancel_open_algo_orders(self, api_sym: str):
+        """取消该 symbol 的所有活跃 algo 订单（从文件重新加载，确保拿到最新数据）"""
+        self._load_algo_ids()  # 重新从文件加载，确保拿到最新持久化的数据
+        ids = self._algo_ids.get(api_sym, [])
+        if not ids:
+            log.info("_cancel_open_algo_orders %s: no algo ids to cancel", api_sym)
+            return
+        cancelled = 0
+        for aid in list(ids):
+            try:
+                self._delete("algoOrder", {"algoId": aid})
+                cancelled += 1
+            except Exception as ex:
+                log.warning("_cancel_open_algo_orders %s aid=%s: %s", api_sym, aid, ex)
+        self._algo_ids[api_sym] = []
+        self._save_algo_ids()
+        if cancelled:
+            log.info("_cancel_open_algo_orders %s: cancelled %d algo orders", api_sym, cancelled)
 
 
 def create_broker(settings, mode: str = "paper",

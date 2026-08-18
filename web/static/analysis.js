@@ -10,9 +10,25 @@ function destroyChart(id) {
     if (charts[id]) { charts[id].destroy(); delete charts[id]; }
 }
 
+// 读取当前模式（实盘/模拟）
+let _mode = 'real';
+async function _getMode() {
+    try {
+        const r = await fetch('/api/mode');
+        const d = await r.json();
+        _mode = d.mode || 'real';
+    } catch (e) { _mode = 'real'; }
+    const title = document.getElementById('analysis-title');
+    if (title) {
+        title.textContent = _mode === 'paper' ? '📊 模拟盘数据分析' : '📊 交易数据分析';
+    }
+}
+
 async function loadAnalysis() {
     const days = document.getElementById('filter-days').value;
-    const res = await fetch(`/api/real-analysis?days=${days}`);
+    // 根据模式选择 API
+    const endpoint = _mode === 'paper' ? '/api/analysis' : '/api/real-analysis';
+    const res = await fetch(`${endpoint}?days=${days}`);
     const d = await res.json();
     if (d.error) { console.error(d.error); return; }
 
@@ -176,4 +192,7 @@ function renderSymbolChart(id, data, barColor) {
     });
 }
 
-loadAnalysis();
+(async function init() {
+    await _getMode();
+    loadAnalysis();
+})();

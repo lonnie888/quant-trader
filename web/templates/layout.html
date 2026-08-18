@@ -81,6 +81,12 @@
             <a href="/" class="nav-link block sm:inline {{ 'active' if request.path == '/' else '' }}">总览</a>
             <a href="/analysis" class="nav-link block sm:inline {{ 'active' if request.path == '/analysis' else '' }}">分析</a>
             <a href="/history" class="nav-link block sm:inline {{ 'active' if request.path == '/history' else '' }}">历史</a>
+            <!-- 实盘/模拟盘切换 -->
+            <div class="block sm:inline-flex items-center gap-1 sm:ml-3 px-2 py-1 rounded" style="background:rgba(240,185,11,0.08);" id="mode-toggle-wrap">
+                <span class="text-xs" style="color:#848e9c;">盘:</span>
+                <button id="mode-btn-real" class="text-xs px-2 py-1 rounded" style="color:#848e9c; background:transparent; border:0; cursor:pointer;" onclick="setMode('real')">实盘</button>
+                <button id="mode-btn-paper" class="text-xs px-2 py-1 rounded" style="color:#848e9c; background:transparent; border:0; cursor:pointer;" onclick="setMode('paper')">模拟</button>
+            </div>
             <a href="/logout" class="nav-link block sm:inline ml-auto" style="color:#848e9c;">退出</a>
         </div>
     </nav>
@@ -93,6 +99,41 @@
     <script>
         document.getElementById('nav-toggle')?.addEventListener('click', function() {
             document.getElementById('nav-menu').classList.toggle('open');
+        });
+
+        // 实盘/模拟盘模式切换
+        function setMode(mode) {
+            fetch('/api/mode', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({mode: mode})
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.ok) {
+                    // 立即刷新页面以应用新模式
+                    location.reload();
+                } else {
+                    alert('切换失败: ' + (data.error || '未知错误'));
+                }
+            })
+            .catch(e => alert('切换失败: ' + e));
+        }
+
+        // 高亮当前模式按钮
+        fetch('/api/mode').then(r => r.json()).then(data => {
+            const m = data.mode || 'real';
+            const realBtn = document.getElementById('mode-btn-real');
+            const paperBtn = document.getElementById('mode-btn-paper');
+            if (m === 'real') {
+                realBtn.style.background = 'rgba(240,185,11,0.25)';
+                realBtn.style.color = '#f0b90b';
+                realBtn.style.fontWeight = 'bold';
+            } else {
+                paperBtn.style.background = 'rgba(14,203,129,0.25)';
+                paperBtn.style.color = '#0ecb81';
+                paperBtn.style.fontWeight = 'bold';
+            }
         });
     </script>
 </body>

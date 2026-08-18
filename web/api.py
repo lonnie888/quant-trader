@@ -238,7 +238,25 @@ def summary():
     events = _read_ledger()
     open_evs = _current_open_positions(events)
     summary_data = _compute_summary(open_evs, events)
+    # Add initial capital so front-end can compute paper equity
+    from quant_trader.config import load_settings
+    _s = load_settings()
+    summary_data["initial_capital"] = float(_s.backtest.initial_capital)
+    summary_data["mode"] = "paper"
     return jsonify(summary_data)
+
+
+@api_bp.route("/mode", methods=["GET", "POST"])
+def mode():
+    """Get or set the web display mode (real | paper)."""
+    from . import mode as _mode
+    if request.method == "POST":
+        new_mode = request.json.get("mode") if request.json else None
+        if new_mode not in ("real", "paper"):
+            return jsonify({"error": "invalid mode, must be 'real' or 'paper'"}), 400
+        _mode.set_mode(new_mode)
+        return jsonify({"mode": new_mode, "ok": True})
+    return jsonify({"mode": _mode.get_mode()})
 
 
 @api_bp.route("/real-summary")
@@ -540,6 +558,111 @@ def real_history():
     except Exception as ex:
         log.warning("real history failed: %s", ex)
         return jsonify({"error": str(ex)}), 500
+
+
+@api_bp.route("/analysis")
+def analysis():
+    """Paper-ledger analysis data (same shape as /real-analysis)."""
+    from collections import defaultdict
+    events = _read_ledger()
+    days = request.args.get("days", 7, type=int)
+
+    # Collect closed trades
+    closes = []
+    seen_ids = set()
+    for ev in events:
+        if ev.get("status") == "closed":
+            eid = int(ev["id"])
+            if eid in seen_ids:
+                continue
+            seen_ids.add(eid)
+            pnl_lev = float(ev.get("pnl_pct_lev", 0) or 0)
+            closes.append({
+                "sym": _strip_symbol(ev["symbol"]),
+                "ts": _parse_ts(ev.get("exit_ts", ev.get("entry_ts", ""))),
+                "day": (ev.get("exit_ts") or ev.get("entry_ts") or "")[:10],
+                "pnl": pnl_lev,
+                "reason": ev.get("exit_reason", "time"),
+            })
+
+    # Filter by days window
+    now_ms = time.time() * 1000
+    start_ms = now_ms - days * 24 * 3600 * 1000
+    closes = [c for c in closes if c["ts"] >= start_ms]
+
+    total_trades = len(closes)
+    wins = sum(1 for c in closes if c["pnl"] > 0)
+    losses = sum(1 for c in closes if c["pnl"] < 0)
+    total_pnl = sum(c["pnl"] for c in closes)
+    win_rate = wins / total_trades * 100 if total_trades else 0
+
+    by_sym = defaultdict(lambda: {"trades": 0, "wins": 0, "pnl": 0.0})
+    for c in closes:
+        s = c["sym"]
+        by_sym[s]["trades"] += 1
+        by_sym[s]["pnl"] += c["pnl"]
+        if c["pnl"] > 0:
+            by_sym[s]["wins"] += 1
+    top_symbols = sorted(by_sym.items(), key=lambda x: x[1]["pnl"], reverse=True)[:15]
+    worst_symbols = sorted(by_sym.items(), key=lambda x: x[1]["pnl"])[:15]
+
+    by_day = defaultdict(lambda: {"pnl": 0.0, "trades": 0, "wins": 0})
+    for c in closes:
+        d = c["day"]
+        by_day[d]["pnl"] += c["pnl"]
+        by_day[d]["trades"] += 1
+        if c["pnl"] > 0:
+            by_day[d]["wins"] += 1
+    daily_pnl = [{"date": d, "pnl": round(v["pnl"], 4), "trades": v["trades"]}
+                 for d, v in sorted(by_day.items())]
+
+    days_sorted = sorted(by_day.keys())
+    cumulative = 0.0
+    equity_curve = []
+    for d in days_sorted:
+        cumulative += by_day[d]["pnl"]
+        equity_curve.append({"date": d, "equity": round(cumulative, 4)})
+
+    # Exit reason distribution
+    by_reason = defaultdict(int)
+    for c in closes:
+        by_reason[c["reason"]] += 1
+
+    pnl_buckets = {"<-2": 0, "-2~-1": 0, "-1~-0.5": 0, "-0.5~0": 0,
+                   "0~0.5": 0, "0.5~1": 0, "1~2": 0, ">2": 0}
+    for c in closes:
+        p = c["pnl"]
+        if p < -2: pnl_buckets["<-2"] += 1
+        elif p < -1: pnl_buckets["-2~-1"] += 1
+        elif p < -0.5: pnl_buckets["-1~-0.5"] += 1
+        elif p < 0: pnl_buckets["-0.5~0"] += 1
+        elif p < 0.5: pnl_buckets["0~0.5"] += 1
+        elif p < 1: pnl_buckets["0.5~1"] += 1
+        elif p < 2: pnl_buckets["1~2"] += 1
+        else: pnl_buckets[">2"] += 1
+
+    return jsonify({
+        "summary": {
+            "total_trades": total_trades,
+            "wins": wins,
+            "losses": losses,
+            "win_rate": round(win_rate, 1),
+            "total_pnl": round(total_pnl, 4),
+            "days": days,
+        },
+        "exit_reasons": {
+            "stop_loss": by_reason.get("SL", by_reason.get("sl", 0)),
+            "take_profit": by_reason.get("TP", by_reason.get("tp", 0)),
+            "time": by_reason.get("time", 0),
+        },
+        "daily_pnl": daily_pnl,
+        "equity_curve": equity_curve,
+        "top_symbols": [{"symbol": s, "pnl": round(v["pnl"], 4), "trades": v["trades"], "wins": v["wins"]}
+                        for s, v in top_symbols],
+        "worst_symbols": [{"symbol": s, "pnl": round(v["pnl"], 4), "trades": v["trades"], "wins": v["wins"]}
+                          for s, v in worst_symbols],
+        "pnl_distribution": [{"range": k, "count": v} for k, v in pnl_buckets.items()],
+    })
 
 
 @api_bp.route("/real-analysis")

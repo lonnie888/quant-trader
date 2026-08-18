@@ -2,7 +2,7 @@
 {% block title %}历史 - Quant Trader{% endblock %}
 
 {% block content %}
-<h1 class="text-xl sm:text-2xl font-bold mb-4 sm:mb-6">交易历史（真实账户）</h1>
+<h1 class="text-xl sm:text-2xl font-bold mb-4 sm:mb-6" id="page-title">交易历史（真实账户）</h1>
 
 <!-- 筛选 -->
 <div class="card mb-4 sm:mb-6">
@@ -30,7 +30,7 @@
 <div class="card p-0">
     <div class="table-wrap">
         <table>
-            <thead>
+            <thead id="history-head">
                 <tr>
                     <th>币种</th>
                     <th>入场价</th>

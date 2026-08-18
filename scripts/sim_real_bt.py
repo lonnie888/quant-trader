@@ -57,7 +57,7 @@ class SimulatedRealBacktest:
         self.circuit_triggered = False
         self._eq_history = []
 
-    def load_symbols(self, store: ParquetStore, min_bars: int = 800, symbol_subset=None):
+    def load_symbols(self, store: ParquetStore, min_bars: int = 100, symbol_subset=None):
         """加载指定币种K线 + 预生成信号."""
         self.symbols = {}
         syms = store.list_symbols()
@@ -212,8 +212,8 @@ class SimulatedRealBacktest:
                 dd = (self.peak_equity - self.equity) / self.peak_equity
                 if dd > self.max_drawdown:
                     self.max_drawdown = dd
-                # 止损冷却
-                if exit_reason == "sl":
+                # 止损/止盈冷却
+                if exit_reason in ("sl", "tp", "stop_loss", "take_profit"):
                     self.cooldowns[sym] = ts + timedelta(hours=self.cooldown_hours)
                 continue
             keep.append(pos)
