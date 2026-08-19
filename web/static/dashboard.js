@@ -44,52 +44,42 @@
             if (sRes.ok) {
                 const s = await sRes.json();
                 const initial = s.initial_capital || 100;
-                const realizedPct = s.total_realized_pnl_pct || 0;
-                const unrealizedPct = s.unrealized_pnl_pct || 0;
+                const equity = s.equity || initial;
+                const totalReturnPct = ((equity - initial) / initial) * 100;
                 const todayPct = s.realized_pnl_pct || 0;
-                // 模拟盘权益 = 初始 + 收益 (Pnl%是百分比，需要还原)
-                // 简化处理: 直接用百分比显示
-                setHtml('paper-equity', initial.toFixed(2) + ' USDT');
+                const winRate = s.win_rate || 0;
+                // 模拟盘权益 = API 计算的复利权益
+                setHtml('paper-equity', equity.toFixed(2) + ' USDT');
                 setHtml('paper-initial', initial.toFixed(2) + ' USDT');
                 setHtml('paper-today-pnl', `<span style="color:${color(todayPct)}">${fmt(todayPct)}%</span>`);
-                setHtml('paper-total-return', `<span style="color:${color(realizedPct + unrealizedPct)}">${fmt(realizedPct + unrealizedPct)}%</span>`);
+                setHtml('paper-total-return', `<span style="color:${color(totalReturnPct)}">${fmt(totalReturnPct)}% (${fmt(equity - initial, 2)} USDT)</span>`);
                 setText('paper-positions-count', s.open_count || 0);
                 setText('paper-trades-count', s.total_trades || 0);
-                setText('paper-winrate', (s.win_rate || 0) + '%');
+                setText('paper-winrate', winRate + '%');
             }
         } catch (e) {
             console.warn('paper summary unavailable:', e);
         }
 
-        // 模拟盘权益曲线 - 用 daily_pnl 累加
+        // 模拟盘权益曲线 - 用 API 的 equity_curve
         try {
             const sRes = await fetch('/api/summary');
             if (sRes.ok && typeof Chart !== 'undefined') {
                 const s = await sRes.json();
-                const daily = s.daily_pnl || [];
-                if (daily.length < 1) {
+                const curve = s.equity_curve || [];
+                if (curve.length < 1) {
                     const wrap = document.getElementById('paper-equity-wrapper');
                     if (wrap) wrap.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:200px;color:#848e9c;font-size:14px;">📊 等待更多数据点后展示权益曲线</div>';
                 } else {
-                    // 把每日 PnL % 累加，得到累计收益率
-                    const initial = s.initial_capital || 100;
-                    let cumPct = 0;
-                    const labels = [];
-                    const equity = [];
-                    for (const d of daily) {
-                        cumPct += d.realized;
-                        labels.push(d.date);
-                        equity.push(initial * (1 + cumPct / 100));
-                    }
                     const ctx = document.getElementById('paperEquityChart');
                     if (ctx) {
                         new Chart(ctx.getContext('2d'), {
                             type: 'line',
                             data: {
-                                labels: labels,
+                                labels: curve.map(x => x.date),
                                 datasets: [{
                                     label: '模拟盘权益 (USDT)',
-                                    data: equity,
+                                    data: curve.map(x => x.equity),
                                     borderColor: '#0ecb81',
                                     backgroundColor: 'rgba(14,203,129,0.1)',
                                     fill: true,

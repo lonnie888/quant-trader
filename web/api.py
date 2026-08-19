@@ -216,10 +216,42 @@ def _compute_summary(open_evs: list[dict], closed_events: list[dict]) -> dict:
 
     daily_pnl = sorted(daily_map.values(), key=lambda x: x["date"])
 
+    # 模拟盘权益计算（复利）：初始资金 + 每笔已平仓盈亏(保证金×杠杆收益)
+    # 每笔: 保证金 = 当前权益 × max_position_pct, 盈亏 = 保证金 × pnl_pct_lev
+    # 未平仓: 浮盈 = 保证金 × unrealized pnl
+    from quant_trader.config import load_settings as _ls
+    try:
+        _s = _ls()
+        _initial = float(_s.backtest.initial_capital)
+        _margin_pct = float(getattr(_s.risk, "max_position_pct", 0.10) or 0.10)
+    except Exception:
+        _initial = 100.0
+        _margin_pct = 0.10
+
+    _equity = _initial
+    _eq_curve = [{"date": today, "equity": round(_equity, 2)}]
+    for ev in sorted(all_closed, key=lambda x: x.get("exit_ts", "")):
+        pnl_lev = ev.get("pnl_pct_lev", 0.0) or 0.0
+        _equity += _equity * _margin_pct * pnl_lev
+        try:
+            _d = datetime.fromisoformat(ev["exit_ts"].replace("Z", "+00:00")).strftime("%Y-%m-%d")
+        except Exception:
+            _d = today
+        _eq_curve.append({"date": _d, "equity": round(_equity, 2)})
+
+    # 未平仓浮盈（对权益的影响）
+    _u_equity = _equity
+    for p in positions:
+        _u_equity += _equity * _margin_pct * p["pnl_pct_lev"]
+
     return {
         "unrealized_pnl_pct": round(unrealized_pnl, 2),
         "realized_pnl_pct": round(realized_pnl * 100, 2),
         "total_realized_pnl_pct": round(total_realized * 100, 2),
+        "initial_capital": round(_initial, 2),
+        "equity": round(_u_equity, 2),          # 当前模拟权益（含浮盈）
+        "equity_realized": round(_equity, 2),   # 已实现权益（不含浮盈）
+        "equity_curve": _eq_curve,              # 权益曲线
         "open_count": len(open_evs),
         "closed_count": len(all_closed),
         "wins": wins,
