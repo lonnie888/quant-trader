@@ -158,7 +158,9 @@ def _compute_summary(open_evs: list[dict], closed_events: list[dict]) -> dict:
 
     # Unrealized PnL: sum of current PnL for open positions
     positions = _build_positions_data(open_evs)
-    unrealized_pnl = sum(p["pnl_pct_lev"] for p in positions) if positions else 0.0
+    # _build_positions_data 的 pnl_pct_lev 是百分数（如 48.63 = +48.63%），
+    # 转回小数用于计算：48.63 / 100 = 0.4863
+    unrealized_pnl = sum(p["pnl_pct_lev"] / 100 for p in positions) if positions else 0.0
 
     # Realized PnL: from closed events today
     realized_pnl = 0.0
@@ -239,10 +241,10 @@ def _compute_summary(open_evs: list[dict], closed_events: list[dict]) -> dict:
             _d = today
         _eq_curve.append({"date": _d, "equity": round(_equity, 2)})
 
-    # 未平仓浮盈（对权益的影响）
+    # 未平仓浮盈（对权益的影响）— pnl_pct_lev 是百分数，除 100 转小数
     _u_equity = _equity
     for p in positions:
-        _u_equity += _equity * _margin_pct * p["pnl_pct_lev"]
+        _u_equity += _equity * _margin_pct * (p["pnl_pct_lev"] / 100)
 
     return {
         "unrealized_pnl_pct": round(unrealized_pnl, 2),
@@ -608,14 +610,30 @@ def analysis():
             if eid in seen_ids:
                 continue
             seen_ids.add(eid)
-            pnl_lev = float(ev.get("pnl_pct_lev", 0) or 0)
+            pnl_lev = float(ev.get("pnl_pct_lev", 0) or 0)  # 杠杆收益率(小数)
             closes.append({
                 "sym": _strip_symbol(ev["symbol"]),
                 "ts": _parse_ts(ev.get("exit_ts", ev.get("entry_ts", ""))),
                 "day": (ev.get("exit_ts") or ev.get("entry_ts") or "")[:10],
-                "pnl": pnl_lev,
+                "pnl_lev": pnl_lev,
                 "reason": ev.get("exit_reason", "time"),
             })
+
+    # 复利计算每笔 USDT 盈亏: 保证金 = 当前权益 × margin_pct, 盈亏 = 保证金 × pnl_lev
+    from quant_trader.config import load_settings as _ls
+    try:
+        _s = _ls()
+        _initial = float(_s.backtest.initial_capital)
+        _margin_pct = float(getattr(_s.risk, "max_position_pct", 0.10) or 0.10)
+    except Exception:
+        _initial = 100.0
+        _margin_pct = 0.10
+
+    closes.sort(key=lambda c: c["ts"])  # 按平仓时间顺序
+    _equity = _initial
+    for c in closes:
+        c["pnl_usdt"] = _equity * _margin_pct * c["pnl_lev"]
+        _equity += c["pnl_usdt"]
 
     # Filter by days window
     now_ms = time.time() * 1000
@@ -623,17 +641,17 @@ def analysis():
     closes = [c for c in closes if c["ts"] >= start_ms]
 
     total_trades = len(closes)
-    wins = sum(1 for c in closes if c["pnl"] > 0)
-    losses = sum(1 for c in closes if c["pnl"] < 0)
-    total_pnl = sum(c["pnl"] for c in closes)
+    wins = sum(1 for c in closes if c["pnl_usdt"] > 0)
+    losses = sum(1 for c in closes if c["pnl_usdt"] < 0)
+    total_pnl = sum(c["pnl_usdt"] for c in closes)
     win_rate = wins / total_trades * 100 if total_trades else 0
 
     by_sym = defaultdict(lambda: {"trades": 0, "wins": 0, "pnl": 0.0})
     for c in closes:
         s = c["sym"]
         by_sym[s]["trades"] += 1
-        by_sym[s]["pnl"] += c["pnl"]
-        if c["pnl"] > 0:
+        by_sym[s]["pnl"] += c["pnl_usdt"]
+        if c["pnl_usdt"] > 0:
             by_sym[s]["wins"] += 1
     top_symbols = sorted(by_sym.items(), key=lambda x: x[1]["pnl"], reverse=True)[:15]
     worst_symbols = sorted(by_sym.items(), key=lambda x: x[1]["pnl"])[:15]
@@ -641,34 +659,36 @@ def analysis():
     by_day = defaultdict(lambda: {"pnl": 0.0, "trades": 0, "wins": 0})
     for c in closes:
         d = c["day"]
-        by_day[d]["pnl"] += c["pnl"]
+        by_day[d]["pnl"] += c["pnl_usdt"]
         by_day[d]["trades"] += 1
-        if c["pnl"] > 0:
+        if c["pnl_usdt"] > 0:
             by_day[d]["wins"] += 1
     daily_pnl = [{"date": d, "pnl": round(v["pnl"], 4), "trades": v["trades"]}
                  for d, v in sorted(by_day.items())]
 
+    # 权益曲线: 初始 + 累计盈亏(USDT)
     days_sorted = sorted(by_day.keys())
     cumulative = 0.0
     equity_curve = []
     for d in days_sorted:
         cumulative += by_day[d]["pnl"]
-        equity_curve.append({"date": d, "equity": round(cumulative, 4)})
+        equity_curve.append({"date": d, "equity": round(_initial + cumulative, 2)})
 
     # Exit reason distribution
     by_reason = defaultdict(int)
     for c in closes:
         by_reason[c["reason"]] += 1
 
-    pnl_buckets = {"<-2": 0, "-2~-1": 0, "-1~-0.5": 0, "-0.5~0": 0,
-                   "0~0.5": 0, "0.5~1": 0, "1~2": 0, ">2": 0}
+    # PnL USDT 金额分布
+    pnl_buckets = {"<-0.5": 0, "-0.5~-0.1": 0, "-0.1~0": 0,
+                   "0~0.1": 0, "0.1~0.5": 0, "0.5~1": 0, "1~2": 0, ">2": 0}
     for c in closes:
-        p = c["pnl"]
-        if p < -2: pnl_buckets["<-2"] += 1
-        elif p < -1: pnl_buckets["-2~-1"] += 1
-        elif p < -0.5: pnl_buckets["-1~-0.5"] += 1
-        elif p < 0: pnl_buckets["-0.5~0"] += 1
-        elif p < 0.5: pnl_buckets["0~0.5"] += 1
+        p = c["pnl_usdt"]
+        if p < -0.5: pnl_buckets["<-0.5"] += 1
+        elif p < -0.1: pnl_buckets["-0.5~-0.1"] += 1
+        elif p < 0: pnl_buckets["-0.1~0"] += 1
+        elif p < 0.1: pnl_buckets["0~0.1"] += 1
+        elif p < 0.5: pnl_buckets["0.1~0.5"] += 1
         elif p < 1: pnl_buckets["0.5~1"] += 1
         elif p < 2: pnl_buckets["1~2"] += 1
         else: pnl_buckets[">2"] += 1
