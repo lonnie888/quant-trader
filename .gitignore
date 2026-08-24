@@ -1,48 +1,10 @@
 # Python
 __pycache__/
+*.py[cod]
 *.pyc
-*.pyo
-*.egg-info/
-dist/
-build/
-
-# Virtual environment
-.venv/
-venv/
-env/
-
-# Data (large binary files)
-data_store/
-reports/paper/
-reports/logs/
-reports/analysis/
-reports/tuning/
-reports/leaderboard.json
-reports/leaderboard.csv
-reports/leaderboard.md
-reports/smoke_leaderboard.json
-reports/smoke_leaderboard.md
-
-# Keep gainers history
-!reports/gainers_history.json
-
-# Config with secrets (use config/settings.yaml.template instead)
-config/settings.yaml
-
-# Dev logs
-logs/
-dev.ps1
-dev.sh
+*$py.class
 
 # IDE
-.vscode/
 .idea/
+.vscode/
 *.swp
-*.swo
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Hermes
-.history

@@ -2,49 +2,50 @@
 {% block title %}总览 - Quant Trader{% endblock %}
 
 {% block content %}
-<h1 class="text-2xl font-bold mb-6">总览</h1>
-
-<!-- 真实账户视图（默认） -->
 <div id="real-view">
     <!-- 真实账户 KPI 卡片 -->
-    <div class="card mb-4" style="border-left: 4px solid #f0b90b;">
-        <div class="label mb-3" style="color:#f0b90b; font-weight:bold;">💰 真实账户</div>
-        <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3 sm:gap-4">
-            <div class="card" style="background:rgba(240,185,11,0.05);">
-                <div class="label text-xs sm:text-xs">总权益</div>
-                <div class="value text-xl sm:text-2xl md:text-3xl" id="real-equity">--</div>
+    <div class="card mb-6" style="border-left: 4px solid #f0b90b;">
+        <div class="flex items-center justify-between mb-4 flex-wrap gap-2">
+            <div class="flex items-center gap-2" style="color:#f0b90b; font-weight:bold; font-size:14px;">
+                <span>💰 真实账户</span>
             </div>
-            <div class="card" style="background:rgba(240,185,11,0.05);">
-                <div class="label text-xs sm:text-xs">可用余额</div>
-                <div class="value text-xl sm:text-2xl md:text-3xl" id="real-available">--</div>
+        </div>
+        <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+            <div class="kpi-card" style="background:rgba(240,185,11,0.05);">
+                <div class="label">总权益</div>
+                <div class="value" id="real-equity">--</div>
             </div>
-            <div class="card" style="background:rgba(240,185,11,0.05);">
-                <div class="label text-xs sm:text-xs">今日 PnL</div>
-                <div class="value text-xl sm:text-2xl md:text-3xl" id="real-today-pnl">--</div>
+            <div class="kpi-card" style="background:rgba(240,185,11,0.05);">
+                <div class="label">可用余额</div>
+                <div class="value" id="real-available">--</div>
             </div>
-            <div class="card" style="background:rgba(240,185,11,0.05);">
-                <div class="label text-xs sm:text-xs">总收益率</div>
-                <div class="value text-xl sm:text-2xl md:text-3xl" id="real-total-return">--</div>
+            <div class="kpi-card" style="background:rgba(240,185,11,0.05);">
+                <div class="label">今日 PnL</div>
+                <div class="value" id="real-today-pnl">--</div>
             </div>
-            <div class="card" style="background:rgba(240,185,11,0.05);">
-                <div class="label text-xs sm:text-xs">持仓数</div>
-                <div class="value text-xl sm:text-2xl md:text-3xl" id="real-positions-count">--</div>
+            <div class="kpi-card" style="background:rgba(240,185,11,0.05);">
+                <div class="label">总收益率</div>
+                <div class="value" id="real-total-return">--</div>
+            </div>
+            <div class="kpi-card" style="background:rgba(240,185,11,0.05);">
+                <div class="label">持仓数</div>
+                <div class="value" id="real-positions-count">--</div>
             </div>
         </div>
     </div>
 
     <!-- 真实账户权益曲线 -->
     <div class="card mb-6">
-        <div class="label mb-4">📈 真实账户权益曲线</div>
-        <div id="real-equity-wrapper" style="height:250px;">
+        <div class="label mb-3">📈 真实账户权益曲线</div>
+        <div id="real-equity-wrapper" style="height:280px; position:relative;">
             <canvas id="realEquityChart"></canvas>
         </div>
     </div>
 
     <!-- 真实持仓 -->
     <div class="card mb-6">
-        <div class="flex items-center justify-between mb-4">
-            <span class="label" style="color:#f0b90b;">💰 真实持仓</span>
+        <div class="flex items-center mb-4">
+            <span class="label" style="color:#f0b90b; font-size:14px;">💰 真实持仓</span>
         </div>
         <div class="table-wrap">
             <div id="real-positions-table">
@@ -54,33 +55,34 @@
     </div>
 </div>
 
-<!-- 模拟盘视图（默认隐藏） -->
 <div id="paper-view" style="display:none;">
     <!-- 模拟盘 KPI 卡片 -->
-    <div class="card mb-4" style="border-left: 4px solid #0ecb81;">
-        <div class="label mb-3" style="color:#0ecb81; font-weight:bold;">🧪 模拟盘 (100 USDT)</div>
-        <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3 sm:gap-4">
-            <div class="card" style="background:rgba(14,203,129,0.05);">
-                <div class="label text-xs sm:text-xs">初始资金</div>
-                <div class="value text-xl sm:text-2xl md:text-3xl" id="paper-initial">--</div>
+    <div class="card mb-6" style="border-left: 4px solid #0ecb81;">
+        <div class="flex items-center mb-4">
+            <span style="color:#0ecb81; font-weight:bold; font-size:14px;">🧪 模拟盘 (100 USDT)</span>
+        </div>
+        <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+            <div class="kpi-card" style="background:rgba(14,203,129,0.05);">
+                <div class="label">初始资金</div>
+                <div class="value" id="paper-initial">--</div>
             </div>
-            <div class="card" style="background:rgba(14,203,129,0.05);">
-                <div class="label text-xs sm:text-xs">模拟权益</div>
-                <div class="value text-xl sm:text-2xl md:text-3xl" id="paper-equity">--</div>
+            <div class="kpi-card" style="background:rgba(14,203,129,0.05);">
+                <div class="label">模拟权益</div>
+                <div class="value" id="paper-equity">--</div>
             </div>
-            <div class="card" style="background:rgba(14,203,129,0.05);">
-                <div class="label text-xs sm:text-xs">今日收益</div>
-                <div class="value text-xl sm:text-2xl md:text-3xl" id="paper-today-pnl">--</div>
+            <div class="kpi-card" style="background:rgba(14,203,129,0.05);">
+                <div class="label">今日收益</div>
+                <div class="value" id="paper-today-pnl">--</div>
             </div>
-            <div class="card" style="background:rgba(14,203,129,0.05);">
-                <div class="label text-xs sm:text-xs">总收益率</div>
-                <div class="value text-xl sm:text-2xl md:text-3xl" id="paper-total-return">--</div>
+            <div class="kpi-card" style="background:rgba(14,203,129,0.05);">
+                <div class="label">总收益率</div>
+                <div class="value" id="paper-total-return">--</div>
             </div>
-            <div class="card" style="background:rgba(14,203,129,0.05);">
-                <div class="label text-xs sm:text-xs">持仓/总交易</div>
-                <div class="value text-xl sm:text-2xl md:text-3xl">
+            <div class="kpi-card" style="background:rgba(14,203,129,0.05);">
+                <div class="label">持仓/总交易</div>
+                <div class="value">
                     <span id="paper-positions-count">--</span>
-                    <span style="color:#848e9c; font-size:14px;"> / <span id="paper-trades-count">--</span></span>
+                    <span style="color:#848e9c; font-size:13px;"> / <span id="paper-trades-count">--</span></span>
                 </div>
                 <div class="text-xs mt-1" style="color:#848e9c;">胜率 <span id="paper-winrate">--</span></div>
             </div>
@@ -89,16 +91,16 @@
 
     <!-- 模拟盘权益曲线 -->
     <div class="card mb-6">
-        <div class="label mb-4">📈 模拟盘权益曲线</div>
-        <div id="paper-equity-wrapper" style="height:250px;">
+        <div class="label mb-3">📈 模拟盘权益曲线</div>
+        <div id="paper-equity-wrapper" style="height:280px; position:relative;">
             <canvas id="paperEquityChart"></canvas>
         </div>
     </div>
 
     <!-- 模拟盘持仓 -->
     <div class="card mb-6">
-        <div class="flex items-center justify-between mb-4">
-            <span class="label" style="color:#0ecb81;">🧪 模拟盘持仓</span>
+        <div class="flex items-center mb-4">
+            <span class="label" style="color:#0ecb81; font-size:14px;">🧪 模拟盘持仓</span>
         </div>
         <div class="table-wrap">
             <div id="paper-positions-table">

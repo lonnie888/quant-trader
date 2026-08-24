@@ -231,7 +231,8 @@ def _compute_summary(open_evs: list[dict], closed_events: list[dict]) -> dict:
         _margin_pct = 0.10
 
     _equity = _initial
-    _eq_curve = [{"date": today, "equity": round(_equity, 2)}]
+    # 不预先放初始点 (日期=今天); 改为从第一笔平仓开始累加
+    _eq_curve = []
     for ev in sorted(all_closed, key=lambda x: x.get("exit_ts", "")):
         pnl_lev = ev.get("pnl_pct_lev", 0.0) or 0.0
         _equity += _equity * _margin_pct * pnl_lev
@@ -240,6 +241,12 @@ def _compute_summary(open_evs: list[dict], closed_events: list[dict]) -> dict:
         except Exception:
             _d = today
         _eq_curve.append({"date": _d, "equity": round(_equity, 2)})
+    # 起始基准点 (第一笔之前的最近一天)
+    if _eq_curve:
+        from datetime import timedelta as _td
+        first_date = datetime.strptime(_eq_curve[0]["date"], "%Y-%m-%d")
+        baseline_date = (first_date - _td(days=1)).strftime("%Y-%m-%d")
+        _eq_curve.insert(0, {"date": baseline_date, "equity": _initial})
 
     # 未平仓浮盈（对权益的影响）— pnl_pct_lev 是百分数，除 100 转小数
     _u_equity = _equity

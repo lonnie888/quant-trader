@@ -52,7 +52,8 @@
                 setHtml('paper-equity', equity.toFixed(2) + ' USDT');
                 setHtml('paper-initial', initial.toFixed(2) + ' USDT');
                 setHtml('paper-today-pnl', `<span style="color:${color(todayPct)}">${fmt(todayPct)}%</span>`);
-                setHtml('paper-total-return', `<span style="color:${color(totalReturnPct)}">${fmt(totalReturnPct)}% (${fmt(equity - initial, 2)} USDT)</span>`);
+                const pnlUsdt = equity - initial;
+                setHtml('paper-total-return', `<span style="color:${color(totalReturnPct)}">${fmt(totalReturnPct)}%<br><span style="font-size:14px; color:#848e9c;">${pnlUsdt >= 0 ? '+' : ''}${pnlUsdt.toFixed(2)} USDT</span></span>`);
                 setText('paper-positions-count', s.open_count || 0);
                 setText('paper-trades-count', s.total_trades || 0);
                 setText('paper-winrate', winRate + '%');
@@ -146,7 +147,7 @@
                 setHtml('real-equity', r.totalWalletBalance.toFixed(2) + ' USDT');
                 setHtml('real-available', r.availableBalance.toFixed(2) + ' USDT');
                 setHtml('real-today-pnl', `<span style="color:${color(r.todayRealizedPnl)}">${fmt(r.todayRealizedPnl, 4)} USDT</span>`);
-                setHtml('real-total-return', `<span style="color:${color(r.totalReturnPct)}">${fmt(r.totalReturnPct)}% (${fmt(r.totalReturnUsdt, 2)} USDT)</span>`);
+                setHtml('real-total-return', `<span style="color:${color(r.totalReturnPct)}">${fmt(r.totalReturnPct)}%<br><span style="font-size:14px; color:#848e9c;">${fmt(r.totalReturnUsdt, 2)} USDT</span></span>`);
                 setText('real-positions-count', r.positionCount);
 
                 const rTbody = document.getElementById('real-positions-table');

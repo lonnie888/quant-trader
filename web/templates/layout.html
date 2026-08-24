@@ -31,6 +31,13 @@
         .nav-link { color: #848e9c; padding: 8px 16px; border-radius: 6px; transition: all 0.15s; }
         .nav-link:hover { color: #eaecef; background: #1e2329; }
         .nav-link.active { color: #f0b90b; background: rgba(240,185,11,0.08); }
+        /* 实盘/模拟盘切换按钮 (固定宽度, 不会被挤) */
+        .mode-toggle { display: inline-flex; gap: 4px; margin-left: 12px; padding: 3px; background: rgba(240,185,11,0.08); border-radius: 6px; }
+        .mode-btn { background: transparent; color: #848e9c; border: 0; padding: 5px 14px; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: 500; transition: all 0.15s; }
+        .mode-btn:hover { color: #eaecef; }
+        @media (max-width: 640px) {
+            .mode-toggle { margin-left: 0; margin-top: 8px; width: fit-content; }
+        }
         .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
         .table-wrap table { min-width: 600px; }
         @media (max-width: 640px) {
@@ -46,6 +53,13 @@
         .btn { background: #2b3139; color: #eaecef; border: none; padding: 6px 14px; border-radius: 4px; cursor: pointer; font-size: 13px; transition: background 0.15s; }
         .btn:hover { background: #3c4553; }
         .btn:disabled { opacity: 0.4; cursor: default; }
+        /* KPI 卡片 (用于 dashboard): 不会撑破网格, 数字自动缩 */
+        .kpi-card { padding: 14px 16px; border-radius: 6px; border: 1px solid #2b3139; min-width: 0; overflow: hidden; }
+        .kpi-card .label { color: #848e9c; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .kpi-card .value { color: #eaecef; font-size: 22px; font-weight: 700; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        @media (max-width: 640px) {
+            .kpi-card .value { font-size: 18px; }
+        }
         input, select { background: #0b0e11; border: 1px solid #2b3139; border-radius: 4px; padding: 6px 10px; color: #eaecef; font-size: 13px; outline: none; }
         input:focus, select:focus { border-color: #f0b90b; }
         @media (max-width: 640px) {
@@ -82,10 +96,9 @@
             <a href="/analysis" class="nav-link block sm:inline {{ 'active' if request.path == '/analysis' else '' }}">分析</a>
             <a href="/history" class="nav-link block sm:inline {{ 'active' if request.path == '/history' else '' }}">历史</a>
             <!-- 实盘/模拟盘切换 -->
-            <div class="block sm:inline-flex items-center gap-1 sm:ml-3 px-2 py-1 rounded" style="background:rgba(240,185,11,0.08);" id="mode-toggle-wrap">
-                <span class="text-xs" style="color:#848e9c;">盘:</span>
-                <button id="mode-btn-real" class="text-xs px-2 py-1 rounded" style="color:#848e9c; background:transparent; border:0; cursor:pointer;" onclick="setMode('real')">实盘</button>
-                <button id="mode-btn-paper" class="text-xs px-2 py-1 rounded" style="color:#848e9c; background:transparent; border:0; cursor:pointer;" onclick="setMode('paper')">模拟</button>
+            <div class="mode-toggle" id="mode-toggle-wrap">
+                <button id="mode-btn-real" class="mode-btn" onclick="setMode('real')">实盘</button>
+                <button id="mode-btn-paper" class="mode-btn" onclick="setMode('paper')">模拟</button>
             </div>
             <a href="/logout" class="nav-link block sm:inline ml-auto" style="color:#848e9c;">退出</a>
         </div>
