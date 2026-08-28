@@ -4,7 +4,7 @@
 # Rankings: Score = total_return * (1 + win_rate) - max_dd * 0.3
 strategies:
   pump_pullback:
-    active: true
+    active: false
     params:
       pump_window: [12]
       pump_threshold: [0.13]
@@ -18,4 +18,21 @@ strategies:
       cooldown: [12]
       stop_loss_pct: [0.12]
       take_profit_pct: [0.25]
+      side: ["long_only"]
+  pump_pullback_opt:
+    active: true
+    params:
+      pump_window: [12]
+      pump_threshold: [0.070738]
+      pullback_min: [0.071613]
+      pullback_max: [0.237939]
+      vol_shrink: [0.873908]
+      vol_recover: [1.0]
+      trigger_pct: [0.0]
+      ema_period: [12]
+      hold_bars: [66]
+      cooldown: [19]
+      stop_loss_pct: [0.139842]
+      take_profit_pct: [0.214923]
+      pump_lookback: [96]
       side: ["long_only"]

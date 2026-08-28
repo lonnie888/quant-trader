@@ -1,0 +1,99 @@
+# Global settings for the quant trader project.
+
+binance:
+  api_key: "YOUR_API_KEY"
+  api_secret: "YOUR_API_SECRET"
+  testnet: false
+  recv_window_ms: 5000
+
+universe:
+  quote: "USDT"
+  top_n: 10
+  min_quote_volume_24h: 20000000
+  exclude: ["BUSDUSDT", "BTCDOMUSDT", "USDCUSDT"]
+
+data:
+  storage_dir: "./data_store"
+  timeframes: ["15m"]
+  lookback_days: 90
+  funding_rate: false
+  # 绿联共享 Jesse 数据库 (postgres 只存 1m, ParquetStore 自动 SQL 聚合到目标周期)
+  postgres:
+    host: "192.168.1.142"
+    port: 15440
+    dbname: "jesse_db"
+    user: "jesse_user"
+    password: "Jesse2025"
+
+backtest:
+  initial_capital: 100.0
+  leverage: 5
+  fee_rate: 0.0004
+  slippage_bps: 5
+  use_funding: false
+  liquidation_buffer: 0.05
+
+scoring:
+  weight_return: 3.0
+  weight_sharpe: 0.5
+  weight_winrate: 0.3
+  weight_drawdown: 0.5
+  weight_profit_factor: 0.5
+  constraints:
+    max_drawdown: 0.30
+    min_sharpe: 0.3
+    min_trades: 3
+
+# Risk limits enforced by the paper trader.
+# Aligned with the locked pump_pullback variant:
+#   stop_loss_pct=0.15 matches the strategy's 15% hard stop
+#   take_profit_pct=0.0 leaves profit to run
+risk:
+  max_position_pct: 0.10      # single position notional <= 10% of equity
+  max_total_exposure: 1.0      # 无限制总敞口
+  daily_loss_limit: 0.50      # 允许一次SL(30%)+一次小亏后继续交易
+  stop_loss_pct: 0.15         # default SL (overridden by strategy params)
+  take_profit_pct: 0.0        # default TP (overridden by strategy params)
+  max_concurrent: 99            # 无限制开单数
+
+notify:
+  enabled: true
+  feishu_webhook: "https://open.feishu.cn/open-apis/bot/v2/hook/728e02b0-50b7-4430-8539-d6aabc9872d4"
+  telegram:
+    bot_token: ""
+    chat_id: ""
+
+# HTTP proxy for Binance API (nikki mihomo on router)
+proxy: "http://192.168.1.1:7890"
+
+# Demo Trading (币安模拟盘) — https://demo.binance.com
+#demo_trading:
+#  mode: "demo"                   # "paper" | "demo"
+#  api_key: "sIqlq7uI5936tQqIke9WiEfcSnYXkNHBhVNwsBVyA14LPNSs1oSLRvfHJdvsJRRJ"
+#  api_secret: "tpBQ6T6Mg6HmpulVx7I6dbSybzSVORN5cP7pOjwIEvmWRHKNW7ZOowDp8BcmfwfU"
+#  base_url: "https://testnet.binancefuture.com"
+
+# Demo Trading (币安真实盘)
+demo_trading:
+  mode: "demo"                   # "paper" | "demo"
+  api_key: "G4qay4jMCd6siM5o2BkMCOHcfreW2iXWUVIMzwguqJ5tdiDiXbgwpKn0LPKif6n4"
+  api_secret: "GDy1R9LKd1WsAOaW993wPrkl4FVJU3jaoRvYnXdXOb3X3Nos8mPU9o44CHlNE4Oq"
+  base_url: "https://fapi.binance.com"
+
+# Web dashboard (optional)
+web:
+  password: "quant888"
+  secret_key: ""
+
+# Market filter: skip opening new positions when market conditions are bad
+# - 周末+坏时段: filter out weekends (Sat/Sun) and bad hours (UTC 0-3, 16-19)
+# - 波动率>阈值 停: skip when 24h average volatility across all symbols exceeds threshold
+# Recommended from H1 backtest (2026-01 to 2026-08): overall win rate 39.1%, 8月2H from -99.9% to +41.3%
+market_filter:
+  enabled: true
+  no_weekend: true
+  no_bad_hours: true
+  bad_hours_utc: [0, 1, 2, 3, 16, 17, 18, 19]
+  volatility_threshold_pct: 12.0  # 全币种 24h 平均波动率 > 此值时停手
+  refresh_seconds: 14400  # 4 小时重新计算一次
+  cache_path: "reports/paper/market_state.json"

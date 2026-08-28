@@ -83,4 +83,9 @@ def create_app() -> Flask:
     def chart():
         return render_template("chart.html")
 
+    @app.route("/data")
+    @login_required
+    def data():
+        return render_template("data.html")
+
     return app

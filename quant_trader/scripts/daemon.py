@@ -186,33 +186,62 @@ async def _refresh_watchlist(broker, settings, kline_loop=None, top_n: int = 50,
     MAINSTREAM = {
         "比特币", "币安人生", "我踏马来了", "龙虾",
     }
+    global _LATEST_GAINERS
+    # 固定币池（PumpPullbackOpt 2026 首选 11 币, 由 Jesse 回测验证）
+    # 若设置了 FIXED_WATCHLIST 则不再动态扫描涨幅榜
+    FIXED_WATCHLIST: list[str] = [
+        "MUBARAKUSDT", "COLLECTUSDT", "TUTUSDT", "KITEUSDT", "PROMUSDT",
+        "SIRENUSDT", "GWEIUSDT", "USELESSUSDT", "BANKUSDT", "MOVRUSDT",
+        "BLESSUSDT",
+    ]
     while True:
         try:
-            from quant_trader.data.fetcher.gainers_scanner import scan_gainers
-            from quant_trader.data.fetcher.binance_client import BinanceClient
-            client = BinanceClient(api_key="", api_secret="", testnet=False)
-            try:
-                gainers = scan_gainers(client, quote="USDT", top_n=top_n,
-                                       min_quote_volume_24h=20_000_000)
-            finally:
-                client.close()
-            # 过滤中文币种
-            syms_ccxt = [g.symbol for g in gainers
-                         if all(ord(c) < 128 for c in g.symbol)]
-            if not syms_ccxt:
-                await asyncio.sleep(900)
-                continue
-            log.info("watchlist refreshed: %d symbols", len(syms_ccxt))
+            if FIXED_WATCHLIST:
+                syms_ccxt = FIXED_WATCHLIST
+                log.info("fixed watchlist: %d symbols (PumpPullbackOpt 11 币池)", len(syms_ccxt))
+                # 仍更新涨幅榜数据供飞书卡片（后台另扫，不阻塞）
+                try:
+                    from quant_trader.data.fetcher.gainers_scanner import scan_gainers
+                    from quant_trader.data.fetcher.binance_client import BinanceClient
+                    client = BinanceClient(api_key="", api_secret="", testnet=False)
+                    try:
+                        gainers = scan_gainers(client, quote="USDT", top_n=top_n,
+                                               min_quote_volume_24h=20_000_000)
+                    finally:
+                        client.close()
+                except Exception:
+                    gainers = []
+                _LATEST_GAINERS = [(g.symbol.split("/")[0].split(":")[0], float(g.pct_change_24h)) for g in gainers
+                                   if all(ord(c) < 128 for c in g.symbol)]
+            else:
+                from quant_trader.data.fetcher.gainers_scanner import scan_gainers
+                from quant_trader.data.fetcher.binance_client import BinanceClient
+                client = BinanceClient(api_key="", api_secret="", testnet=False)
+                try:
+                    gainers = scan_gainers(client, quote="USDT", top_n=top_n,
+                                           min_quote_volume_24h=20_000_000)
+                finally:
+                    client.close()
+                # 过滤中文币种
+                syms_ccxt = [g.symbol for g in gainers
+                             if all(ord(c) < 128 for c in g.symbol)]
+                if not syms_ccxt:
+                    await asyncio.sleep(900)
+                    continue
+                log.info("watchlist refreshed: %d symbols", len(syms_ccxt))
 
-            # 更新共享涨幅榜数据（供飞书卡片使用）
-            global _LATEST_GAINERS
-            _LATEST_GAINERS = [(g.symbol.split("/")[0].split(":")[0], float(g.pct_change_24h)) for g in gainers
-                               if all(ord(c) < 128 for c in g.symbol)]
+                # 更新共享涨幅榜数据（供飞书卡片使用）
+                _LATEST_GAINERS = [(g.symbol.split("/")[0].split(":")[0], float(g.pct_change_24h)) for g in gainers
+                                   if all(ord(c) < 128 for c in g.symbol)]
 
             # 更新 WS 订阅列表（新增的币种自动拉历史数据 + 补扫）
             if kline_loop is not None and syms_ccxt:
-                # 转换为 WS 订阅格式（如 TUTUSDT）
-                ws_symbols = [s.split("/")[0].split(":")[0] + "USDT" for s in syms_ccxt]
+                # 转换为 WS 订阅格式（如 TUTUSDT）; FIXED_WATCHLIST 已是 USDT 后缀,
+                # 动态涨幅榜为 ccxt 格式 "TUT/USDT:USDT", 需补 USDT 后缀
+                ws_symbols = []
+                for s in syms_ccxt:
+                    base = s.split("/")[0].split(":")[0]
+                    ws_symbols.append(base if base.endswith("USDT") else base + "USDT")
                 await kline_loop.update_subscription(ws_symbols)
 
             # 熔断器检查（熔断时通知飞书，不清仓）
@@ -229,15 +258,15 @@ async def _refresh_watchlist(broker, settings, kline_loop=None, top_n: int = 50,
             log.warning("watchlist refresh failed: %s", ex)
         if refresh_event is not None:
             refresh_event.set()
-        # 对齐K线收盘时间
+        # 对齐K线收盘时间（1小时整点）
         try:
             import time as _time
             now = _time.time()
-            next_15min = (int(now) // 900 + 1) * 900
-            wait = next_15min - now + 5
+            next_hour = (int(now) // 3600 + 1) * 3600
+            wait = next_hour - now + 5
             await asyncio.sleep(max(wait, 1))
         except Exception:
-            await asyncio.sleep(900)
+            await asyncio.sleep(3600)
 
 
 async def _data_health_loop(kline_loop, stop_event, interval: int = 600):
@@ -263,16 +292,27 @@ async def _data_health_loop(kline_loop, stop_event, interval: int = 600):
                 store_sym = f"{sym}/USDT:USDT" if not sym.endswith("USDT") else f"{sym[:-4]}/USDT:USDT"
                 sym_full = sym if sym.endswith("USDT") else sym + "USDT"
                 try:
-                    df = store.load(store_sym, "15m")
-                    if df.empty or len(df) < 100:
+                    # 本地缓存检查: 有 pg 兜底时只要本地有数据即健康 (历史由 pg 提供,
+                    # 实时由 WS 收盘增量写本地); 无 pg 时才用 age 严格检查.
+                    df = store.load_local(store_sym, "1h")
+                    has_pg = store.has_pg(store_sym)
+                    if df.empty or len(df) < 20:
+                        # 本地无缓存: 先尝试从 pg 初始化历史 (统一数据源), 成功则不算 stale
+                        if has_pg:
+                            n = store.pull_pg_to_local(store_sym, "1h")
+                            if n >= 20:
+                                log.info("data health: %s 本地缓存已从 pg 初始化 (%d rows)", sym_full, n)
+                                continue
                         stale.append((sym_full, "无数据"))
                         continue
+                    if has_pg:
+                        continue  # pg 历史兜底, 本地有数据即健康
                     last_time = df.index[-1]
                     if hasattr(last_time, 'tz') and last_time.tz:
                         age = (now - last_time).total_seconds() / 60
                     else:
                         age = 999
-                    if age > 30:
+                    if age > 90:  # 无 pg 时本地缓存超过90分钟未更新视为过旧
                         stale.append((sym_full, f"过旧{age:.0f}分"))
                 except Exception:
                     continue
@@ -283,7 +323,7 @@ async def _data_health_loop(kline_loop, stop_event, interval: int = 600):
                     try:
                         start_ms = int((now - timedelta(days=7)).timestamp() * 1000)
                         end_ms = int(now.timestamp() * 1000)
-                        url = f"https://fapi.binance.com/fapi/v1/klines?symbol={sym}&interval=15m&startTime={start_ms}&endTime={end_ms}&limit=1000"
+                        url = f"https://fapi.binance.com/fapi/v1/klines?symbol={sym}&interval=1h&startTime={start_ms}&endTime={end_ms}&limit=1000"
                         r = _rq.get(url, timeout=30)
                         if r.status_code == 200:
                             raw = r.json()
@@ -297,7 +337,7 @@ async def _data_health_loop(kline_loop, stop_event, interval: int = 600):
                                 _df["timestamp"] = _pd.to_datetime(_df["timestamp"], unit="ms", utc=True)
                                 _df = _df.set_index("timestamp")
                                 store_sym2 = f"{sym[:-4]}/USDT:USDT" if sym.endswith("USDT") else sym + "/USDT:USDT"
-                                store.save(store_sym2, "15m", _df)
+                                store.save(store_sym2, "1h", _df)
                                 log.info("data health: %s 已刷新 (%d rows)", sym, len(_df))
                     except Exception as ex:
                         log.warning("data health refresh failed %s: %s", sym, ex)
@@ -305,17 +345,17 @@ async def _data_health_loop(kline_loop, stop_event, interval: int = 600):
             log.warning("data health loop error: %s", ex)
 
 async def _feishu_signal_loop(settings, stop_event, kline_loop=None):
-    """每15分钟K线收盘时发飞书量化信号卡片（涨幅榜/开仓/风控阻挡）。"""
+    """每1小时K线收盘时发飞书量化信号卡片（涨幅榜/开仓/风控阻挡）。"""
     from datetime import datetime, timezone
     from quant_trader.execution.notifier import FeishuNotifier, FeishuCardBuilder
     from quant_trader.execution.paper_ledger import get_open_positions, get_all_positions
     from pathlib import Path
     while not stop_event.is_set():
-        # 对齐到下一个15分钟整点（xx:00/xx:15/xx:30/xx:45）
+        # 对齐到下一个1小时整点（xx:00）
         import time as _time
         now = _time.time()
-        next_15min = (int(now) // 900 + 1) * 900
-        wait = next_15min - now + 5
+        next_hour = (int(now) // 3600 + 1) * 3600
+        wait = next_hour - now + 5
         try:
             await asyncio.wait_for(stop_event.wait(), timeout=max(wait, 1))
         except asyncio.TimeoutError:

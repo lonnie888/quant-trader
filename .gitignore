@@ -8,3 +8,18 @@ __pycache__/
 .idea/
 .vscode/
 *.swp
+
+# 运行产物 / 本地数据 (不提交)
+.venv/
+data_store/
+logs/
+reports/logs/
+reports/paper/
+reports/analysis/
+reports/*.csv
+reports/*.json
+reports/*.md
+reports/*.parquet
+*.bak_*
+*.paused
+*.log

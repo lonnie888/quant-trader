@@ -11,13 +11,14 @@ from .library.mean_reversion import MeanReversionStrategy
 from .library.pump_pullback import PumpPullbackStrategy
 from .library.rsi import RSIStrategy
 from .library.turtle import TurtleStrategy
+from .library.pump_pullback_opt import PumpPullbackOptStrategy
 
 REGISTRY: dict[str, type[Strategy]] = {
     cls.name: cls
     for cls in (
         MACross, MACDStrategy, RSIStrategy, BollingerStrategy, KDJStrategy,
         TurtleStrategy, BreakoutStrategy, MeanReversionStrategy,
-        PumpPullbackStrategy,
+        PumpPullbackStrategy, PumpPullbackOptStrategy,
     )
 }
 

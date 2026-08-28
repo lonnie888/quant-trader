@@ -99,13 +99,13 @@ class MarketFilter:
         cutoff = now - pd.Timedelta(hours=24)
         for sym in syms:
             try:
-                df = self.store.load(sym, "15m")
-                if df.empty or len(df) < 96:
+                df = self.store.load(sym, "1h")
+                if df.empty or len(df) < 24:
                     continue
                 # 取最近 24h 数据
                 df_24h = df[df.index >= cutoff]
-                if len(df_24h) < 96:
-                    df_24h = df.tail(96)
+                if len(df_24h) < 24:
+                    df_24h = df.tail(24)
                 c = float(df_24h["close"].iloc[-1])
                 if c <= 0:
                     continue

@@ -1,4 +1,4 @@
-"""Kline stream handler - runs strategy on each closed 15m bar via WebSocket.
+"""Kline stream handler - runs strategy on each closed 1h bar via WebSocket.
 
 On `k.x = true` (bar closed):
   - Update parquet cache for that symbol
@@ -68,7 +68,7 @@ class KlineStrategyLoop:
                 start_ms = int((now - timedelta(days=7)).timestamp() * 1000)
                 end_ms = int(now.timestamp() * 1000)
                 store_sym = f"{sym[:-4]}/USDT:USDT" if sym.endswith("USDT") else sym + "/USDT:USDT"
-                url = f"{FAPI_KLINE}?symbol={sym}&interval=15m&startTime={start_ms}&endTime={end_ms}&limit=1000"
+                url = f"{FAPI_KLINE}?symbol={sym}&interval=1h&startTime={start_ms}&endTime={end_ms}&limit=1000"
                 loop = asyncio.get_event_loop()
                 r = await loop.run_in_executor(None, lambda: _rq.get(url, timeout=30))
                 r.raise_for_status()
@@ -84,7 +84,7 @@ class KlineStrategyLoop:
                     _df = _pd.DataFrame(_rows)
                     _df["timestamp"] = _pd.to_datetime(_df["timestamp"], unit="ms", utc=True)
                     _df = _df.set_index("timestamp")
-                    self.store.save(store_sym, "15m", _df)
+                    self.store.save(store_sym, "1h", _df)
                     return True
             except Exception:
                 return False
@@ -120,7 +120,7 @@ class KlineStrategyLoop:
                 self._ws.on(sym.upper(), self._handle) if self._ws else None
             if self._ws is not None:
                 from .ws_client import stream_kline
-                streams = [stream_kline(s, "15m") for s in added]
+                streams = [stream_kline(s, "1h") for s in added]
                 await self._ws.subscribe(streams)
                 log.info("ws added %d symbols: %s", len(added), list(added)[:5])
             # 新币种立即拉历史数据，避免信号延迟
@@ -135,7 +135,7 @@ class KlineStrategyLoop:
 
         # 移除的币种取消订阅
         if removed and self._ws is not None:
-            streams = [stream_kline(s, "15m") for s in removed]
+            streams = [stream_kline(s, "1h") for s in removed]
             await self._ws.unsubscribe(streams)
             log.info("ws removed %d symbols: %s", len(removed), list(removed)[:5])
 
@@ -169,7 +169,7 @@ class KlineStrategyLoop:
                 return
 
             proxy = getattr(self.settings, "proxy", None)
-            streams = [stream_kline(s, "15m") for s in self._current_symbols]
+            streams = [stream_kline(s, "1h") for s in self._current_symbols]
 
             self._ws = FapiWS(proxy=proxy)
             for sym in self._current_symbols:
@@ -205,7 +205,7 @@ class KlineStrategyLoop:
         if not k:
             return
         sym_raw = data.get("s", "").upper()
-        interval = k.get("i", "15m")
+        interval = k.get("i", "1h")
         if not k.get("x"):
             return  # bar not closed yet, skip
         log.info("[ws] 收盘 %s %s close=%s", sym_raw, interval, k.get("c"))
@@ -235,7 +235,8 @@ class KlineStrategyLoop:
             "volume": float(k["v"]),
         }
         new_df = pd.DataFrame([row]).set_index("timestamp")
-        df_existing = self.store.load(sym, interval)
+        # 只读本地缓存增量 (pg 全量由 load() 合并, 不在此混入避免每次收盘拉全量)
+        df_existing = self.store.load_local(sym, interval)
         if df_existing.empty:
             combined = new_df
         else:
@@ -257,25 +258,25 @@ class KlineStrategyLoop:
         sym_short = sym.split("/")[0].split(":")[0]
 
         # 1. 数据准备
-        df = self.store.load(sym, "15m")
-        if df.empty or len(df) < 100:
+        df = self.store.load(sym, "1h")
+        if df.empty or len(df) < 24:
             return
         if len(df) >= 2:
             gap = (df.index[-1] - df.index[-2]).total_seconds() / 60
-            if gap > 30:
+            if gap > 90:  # 1h K线间隔60分钟, 容差90分钟
                 return
         last_time = df.index[-1]
         if hasattr(last_time, 'tz') and last_time.tz:
             data_age = (now - last_time).total_seconds() / 60
         else:
             data_age = 999
-        if data_age > 30:
+        if data_age > 90:
             # 数据过旧，尝试从 Binance 拉取最新数据
             try:
                 import requests as _rq
                 from datetime import timedelta
                 api_sym = sym_short + "USDT"
-                url = f"https://fapi.binance.com/fapi/v1/klines?symbol={api_sym}&interval=15m&startTime={int((now-timedelta(days=7)).timestamp()*1000)}&endTime={int(now.timestamp()*1000)}&limit=1000"
+                url = f"https://fapi.binance.com/fapi/v1/klines?symbol={api_sym}&interval=1h&startTime={int((now-timedelta(days=7)).timestamp()*1000)}&endTime={int(now.timestamp()*1000)}&limit=1000"
                 r = _rq.get(url, timeout=30)
                 if r.status_code == 200:
                     raw = r.json()
@@ -288,22 +289,23 @@ class KlineStrategyLoop:
                         _df = pd.DataFrame(_rows)
                         _df["timestamp"] = pd.to_datetime(_df["timestamp"], unit="ms", utc=True)
                         _df = _df.set_index("timestamp")
-                        self.store.save(sym, "15m", _df)
+                        self.store.save(sym, "1h", _df)
                         df = _df
                         log.info("[ws] %s 数据已重新拉取(%d rows)", sym, len(df))
             except Exception:
                 pass
-            if df.empty or len(df) < 100:
+            if df.empty or len(df) < 24:
                 return
 
-        # 2. 泵检测
-        pump_window, pump_threshold = 12, 0.13
+        # 2. 泵检测（预过滤：低于最低策略泵阈值的直接跳过，避免无效计算）
+        # 注: pump_pullback_opt 的泵阈值是 0.070738(7%)，预过滤用 5% 保证不误杀
+        pump_window, pump_threshold = 12, 0.05
         if len(df) >= pump_window:
             win_high = df["high"].iloc[-pump_window:].max()
             base_close = df["close"].iloc[-pump_window]
             pump_pct = win_high / base_close - 1 if base_close > 0 else 0
             if pump_pct < pump_threshold:
-                log.info("[ws] %s 无泵(%.1f%% < 13%%)", sym, pump_pct * 100)
+                log.info("[ws] %s 无泵(%.1f%% < 5%%)", sym, pump_pct * 100)
                 return
         else:
             return

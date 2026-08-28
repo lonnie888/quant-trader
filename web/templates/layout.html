@@ -95,6 +95,7 @@
             <a href="/" class="nav-link block sm:inline {{ 'active' if request.path == '/' else '' }}">总览</a>
             <a href="/analysis" class="nav-link block sm:inline {{ 'active' if request.path == '/analysis' else '' }}">分析</a>
             <a href="/history" class="nav-link block sm:inline {{ 'active' if request.path == '/history' else '' }}">历史</a>
+            <a href="/data" class="nav-link block sm:inline {{ 'active' if request.path == '/data' else '' }}">数据</a>
             <!-- 实盘/模拟盘切换 -->
             <div class="mode-toggle" id="mode-toggle-wrap">
                 <button id="mode-btn-real" class="mode-btn" onclick="setMode('real')">实盘</button>

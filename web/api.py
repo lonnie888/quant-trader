@@ -944,3 +944,80 @@ def klines(symbol):
         "klines": klines_out,
         "markers": markers,
     })
+
+
+# ---------------------------------------------------------------------------
+# K线数据管理器
+# ---------------------------------------------------------------------------
+
+@api_bp.route("/kline-manager/scan")
+def kline_manager_scan():
+    """扫描 data_store, 返回所有币种 K 线数据概况."""
+    sys.path.insert(0, str(ROOT))
+    try:
+        from scripts.kline_manager import scan_store
+    except ImportError:
+        # 直接 import 失败则用内联逻辑
+        return jsonify({"error": "kline_manager script not found"}), 500
+    df = scan_store(cache_path=str(ROOT / 'reports' / 'kline_scan.parquet'))
+    records = []
+    for _, r in df.iterrows():
+        records.append({
+            'symbol': r['symbol'],
+            'rows': int(r['rows']),
+            'start_date': r.get('start_date'),
+            'end_date': r.get('end_date'),
+            'span_days': int(r.get('span_days', 0)) if pd.notna(r.get('span_days')) else 0,
+            'gaps': int(r.get('gaps_2h', 0)),
+            'has_funding': bool(r.get('has_funding', False)),
+            'first': r.get('first'),
+            'last': r.get('last'),
+        })
+    return jsonify({'total': len(records), 'symbols': records})
+
+
+@api_bp.route("/kline-manager/symbols")
+def kline_manager_symbols():
+    """读取缓存的 K 线概况 (不重新扫描)."""
+    cache_path = ROOT / 'reports' / 'kline_scan.parquet'
+    if not cache_path.exists():
+        return jsonify({'total': 0, 'symbols': [], 'cached': False})
+    import pandas as pd
+    df = pd.read_parquet(cache_path)
+    records = []
+    for _, r in df.iterrows():
+        records.append({
+            'symbol': r['symbol'],
+            'rows': int(r['rows']),
+            'start_date': r.get('start_date'),
+            'end_date': r.get('end_date'),
+            'span_days': int(r.get('span_days', 0)) if pd.notna(r.get('span_days')) else 0,
+            'gaps': int(r.get('gaps_2h', 0)),
+            'has_funding': bool(r.get('has_funding', False)),
+        })
+    return jsonify({'total': len(records), 'symbols': records, 'cached': True})
+
+
+@api_bp.route("/kline-manager/<symbol>")
+def kline_manager_detail(symbol):
+    """返回单币种 K 线时间线明细 (按月统计)."""
+    from quant_trader.data.storage.parquet_store import ParquetStore
+    store = ParquetStore(ROOT / 'data_store')
+    sym_key = f'{symbol}_USDT_USDT'
+    df = store.load(sym_key, '15m')
+    if df.empty:
+        return jsonify({'symbol': symbol, 'error': 'no data'})
+    # 按月统计 (此 pandas 3.0.3 要求 'M', 不接受 'ME')
+    months = {}
+    for ts in df.index:
+        key = str(ts.to_period('M'))
+        months.setdefault(key, 0)
+        months[key] += 1
+    month_list = [{'month': k, 'rows': v} for k, v in sorted(months.items())]
+    return jsonify({
+        'symbol': symbol,
+        'total_rows': len(df),
+        'first': str(df.index[0]),
+        'last': str(df.index[-1]),
+        'months': month_list,
+    })
