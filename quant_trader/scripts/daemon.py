@@ -946,19 +946,24 @@ async def main():
     mf_cfg = getattr(settings, "market_filter", None)
     if mf_cfg is not None and getattr(mf_cfg, "enabled", True):
         from pathlib import Path as _P
+        _no_we = bool(getattr(mf_cfg, "no_weekend", True))
+        _no_bh = bool(getattr(mf_cfg, "no_bad_hours", True))
         market_filter = MarketFilter(
             store=ParquetStore(settings.data.storage_dir),
             vol_threshold=float(getattr(mf_cfg, "volatility_threshold_pct", 12.0)),
             refresh_seconds=int(getattr(mf_cfg, "refresh_seconds", 14400)),
-            no_weekend=bool(getattr(mf_cfg, "no_weekend", True)),
-            no_bad_hours=bool(getattr(mf_cfg, "no_bad_hours", True)),
+            no_weekend=_no_we,
+            no_bad_hours=_no_bh,
             bad_hours=set(getattr(mf_cfg, "bad_hours_utc", [0, 1, 2, 3, 16, 17, 18, 19])),
             cache_path=_P(getattr(mf_cfg, "cache_path", "reports/paper/market_state.json")),
         )
-        log.info(
-            "market filter enabled: vol>%.1f%% 周末+坏时段 filter active",
-            market_filter.vol_threshold,
-        )
+        _filters = []
+        if _no_we:
+            _filters.append("周末")
+        if _no_bh:
+            _filters.append("坏时段")
+        _filters.append("波动率>%.1f%%" % market_filter.vol_threshold)
+        log.info("market filter enabled: %s", "+".join(_filters))
     else:
         log.info("market filter disabled (config.market_filter.enabled=false or missing)")
 

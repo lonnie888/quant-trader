@@ -91,8 +91,8 @@ web:
 # Recommended from H1 backtest (2026-01 to 2026-08): overall win rate 39.1%, 8月2H from -99.9% to +41.3%
 market_filter:
   enabled: true
-  no_weekend: true
-  no_bad_hours: true
+  no_weekend: false
+  no_bad_hours: false
   bad_hours_utc: [0, 1, 2, 3, 16, 17, 18, 19]
   volatility_threshold_pct: 12.0  # 全币种 24h 平均波动率 > 此值时停手
   refresh_seconds: 14400  # 4 小时重新计算一次
