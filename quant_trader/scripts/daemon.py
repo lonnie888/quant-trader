@@ -190,9 +190,13 @@ async def _refresh_watchlist(broker, settings, kline_loop=None, top_n: int = 50,
     # 固定币池（PumpPullbackOpt 2026 首选 11 币, 由 Jesse 回测验证）
     # 若设置了 FIXED_WATCHLIST 则不再动态扫描涨幅榜
     FIXED_WATCHLIST: list[str] = [
+        # 原 11 币池 (PumpPullbackOpt)
         "MUBARAKUSDT", "COLLECTUSDT", "TUTUSDT", "KITEUSDT", "PROMUSDT",
         "SIRENUSDT", "GWEIUSDT", "USELESSUSDT", "BANKUSDT", "MOVRUSDT",
         "BLESSUSDT",
+        # 2026-08-29 筛选新增 (分月验证稳定盈利): ENSO/MAGMA/XNY/DEXE/HOME/HEMI/龙虾/XAN/EDEN
+        "ENSOUSDT", "MAGMAUSDT", "XNYUSDT", "DEXEUSDT", "HOMEUSDT",
+        "HEMIUSDT", "龙虾USDT", "XANUSDT", "EDENUSDT",
     ]
     while True:
         try:

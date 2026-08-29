@@ -16,6 +16,7 @@ import asyncio
 import json
 import logging
 from typing import Callable, Awaitable
+from urllib.parse import quote
 
 import aiohttp
 
@@ -122,7 +123,9 @@ class FapiWS:
             while not (self._stop or (stop_event and stop_event.is_set())):
                 try:
                     streams = "/".join(sorted(self.subs))
-                    url = f"{WS_BASE}/stream?streams={streams}" if streams else WS_BASE
+                    # 中文 symbol (如 龙虾) 需 URL 编码, 保留 @ _ / 分隔符
+                    streams_path = quote(streams, safe='@/_')
+                    url = f"{WS_BASE}/stream?streams={streams_path}" if streams else WS_BASE
                     log.info("connecting to %s (proxy=%s)", url, self.proxy)
                     kwargs = {"timeout": aiohttp.ClientWSTimeout(ws_close=8.0), "heartbeat": 20.0}
                     if self.proxy:

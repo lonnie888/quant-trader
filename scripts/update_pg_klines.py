@@ -26,18 +26,27 @@ DEFAULT_SYMS = ["MUBARAK", "COLLECT", "TUT", "KITE", "PROM", "SIREN",
 
 
 def fetch_klines(base: str, start_ms: int, end_ms: int) -> list[list]:
-    """从 Binance fapi 拉 1m klines (分页 1500 根/次)."""
+    """从 Binance fapi 拉 1m klines (分页 1500 根/次, 失败重试)."""
     rows: list[list] = []
     cur = start_ms
     while cur < end_ms:
-        r = requests.get(
-            "https://fapi.binance.com/fapi/v1/klines",
-            params={"symbol": base + "USDT", "interval": "1m",
-                    "startTime": cur, "endTime": end_ms, "limit": 1500},
-            timeout=30, proxies=PROXY,
-        )
-        r.raise_for_status()
-        data = r.json()
+        data = None
+        for attempt in range(4):
+            try:
+                r = requests.get(
+                    "https://fapi.binance.com/fapi/v1/klines",
+                    params={"symbol": base + "USDT", "interval": "1m",
+                            "startTime": cur, "endTime": end_ms, "limit": 1500},
+                    timeout=30, proxies=PROXY,
+                )
+                r.raise_for_status()
+                data = r.json()
+                break
+            except Exception as e:
+                if attempt == 3:
+                    print(f"  {base} 重试4次仍失败: {e}", flush=True)
+                    return rows  # 保留已拉部分
+                time.sleep(2 * (attempt + 1))  # 2,4,6s 退避
         if not data:
             break
         rows.extend(data)
@@ -45,7 +54,7 @@ def fetch_klines(base: str, start_ms: int, end_ms: int) -> list[list]:
         if len(data) < 1500 or last >= end_ms:
             break
         cur = last + 1
-        time.sleep(0.15)
+        time.sleep(0.3)  # 降频防重置
     return rows
 
 

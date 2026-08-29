@@ -93,13 +93,17 @@ class MarketFilter:
             self._last_reason = f"compute error: {ex}"
 
     def _compute_volatility(self, now: datetime) -> None:
-        """Compute 24h average volatility across all available symbols."""
+        """Compute 24h average volatility across local-cached symbols.
+
+        ⚠️ 用 load_local(本地 parquet) 而非 load(pg): 否则 is_blocked 同步触发的
+        全量 pg 聚合会阻塞 asyncio 事件循环数分钟 (绿联 NAS 每币 ~20s).
+        """
         syms = self.store.list_symbols()
         vols = []
         cutoff = now - pd.Timedelta(hours=24)
         for sym in syms:
             try:
-                df = self.store.load(sym, "1h")
+                df = self.store.load_local(sym, "1h")
                 if df.empty or len(df) < 24:
                     continue
                 # 取最近 24h 数据
@@ -113,6 +117,8 @@ class MarketFilter:
                 lo = float(df_24h["low"].min())
                 vol = (h - lo) / c * 100
                 vols.append(vol)
+                if len(vols) >= 20:
+                    break
             except Exception:
                 continue
         if vols:

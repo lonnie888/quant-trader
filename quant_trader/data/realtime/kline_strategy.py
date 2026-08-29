@@ -125,11 +125,11 @@ class KlineStrategyLoop:
                 log.info("ws added %d symbols: %s", len(added), list(added)[:5])
             # 新币种立即拉历史数据，避免信号延迟
             await self._preheat_data(list(added))
-            # 预热后立即补扫，不错过信号
+            # 预热后立即补扫，不错过信号 (用本地缓存, 秒级, 不阻塞 WS 连接)
             for sym in added:
                 full_sym = f"{sym[:-4]}/USDT:USDT" if sym.endswith("USDT") else sym + "/USDT:USDT"
                 try:
-                    await self._check_signal(full_sym)
+                    await self._check_signal(full_sym, local_only=True)
                 except Exception:
                     pass
 
@@ -177,7 +177,7 @@ class KlineStrategyLoop:
             await self._ws.subscribe(streams)
             log.info("[ws] registered %d handlers, streams=%d", len(self._ws.handlers), len(streams))
             connected = await self._ws.run()
-            # 连接成功后（或重连后），补扫所有币种信号
+            # 连接成功后（或重连后），补扫所有币种信号 (用本地缓存秒级, 避免 pg 聚合阻塞)
             if connected:
                 log.info("ws connected, catch-up scan %d symbols", len(self._current_symbols))
                 for sym in self._current_symbols:
@@ -187,7 +187,7 @@ class KlineStrategyLoop:
                     else:
                         full_sym = sym + "/USDT:USDT"
                     try:
-                        await self._check_signal(full_sym)
+                        await self._check_signal(full_sym, local_only=True)
                     except Exception:
                         pass
         finally:
@@ -246,8 +246,11 @@ class KlineStrategyLoop:
         self.store.save(sym, interval, combined)
         log.info("[ws] cache %s: %d rows", sym, len(combined))
 
-    async def _check_signal(self, sym: str):
-        """Run strategy on the symbol and open position if signal detected."""
+    async def _check_signal(self, sym: str, local_only: bool = False):
+        """Run strategy on the symbol and open position if signal detected.
+
+        local_only=True: 只用本地预热缓存(秒级), 供启动补扫; 正式收盘检查用完整 pg+本地.
+        """
         import time as _time
         instances = generate_instances(self.strategies_cfg)
         positions_path = Path("reports/paper/positions.jsonl")
@@ -258,7 +261,7 @@ class KlineStrategyLoop:
         sym_short = sym.split("/")[0].split(":")[0]
 
         # 1. 数据准备
-        df = self.store.load(sym, "1h")
+        df = self.store.load_local(sym, "1h") if local_only else self.store.load(sym, "1h")
         if df.empty or len(df) < 24:
             return
         if len(df) >= 2:
