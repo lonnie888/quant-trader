@@ -353,15 +353,17 @@ def generate_signals(
                 mask = mask & (sigs.index < test_end)
             sigs_in = sigs[(sigs == 1) & mask]
             if not sigs_in.empty:
-                # 修复: 在完整序列上检测 0→1 转变, 不能先过滤掉0再shift
-                # (先过滤会导致跨持仓段的入场点丢失, 只保留第一个信号)
-                full = sigs.copy()
+                # 修复: 全序列检测 0→1 转变, 再用窗口过滤.
+                # ⚠️ 不能把窗口前置0再shift: 若窗口起点处于持仓段(前一根已=1),
+                # 会被误判成"新开仓"信号 (持仓中 state=1 但窗口前置0后变0→1假转变).
+                prev_all = sigs.shift(1).fillna(0)
+                entries_all = sigs.index[(sigs == 1) & (prev_all != 1)]
+                e_mask = pd.Series(True, index=entries_all)
                 if test_start is not None:
-                    full[sigs.index < test_start] = 0
+                    e_mask = e_mask & (entries_all >= test_start)
                 if test_end is not None:
-                    full[sigs.index >= test_end] = 0
-                prev = full.shift(1).fillna(0)
-                entries = full.index[(full == 1) & (prev != 1)]
+                    e_mask = e_mask & (entries_all < test_end)
+                entries = entries_all[e_mask]
                 if len(entries) > 0:
                     signals[sym] = list(entries)
         except Exception as e:
