@@ -41,7 +41,7 @@ async function loadHistory() {
     const endpoint = _mode === 'paper' ? '/api/history' : '/api/real-history';
     let url = `${endpoint}?page=${currentPage}&per_page=${perPage}&days=${days}`;
     if (_mode === 'paper') {
-        const strat = (typeof qtStrategy === 'function') ? qtStrategy() : '';
+        const strat = localStorage.getItem('qt_strategy') || '';
         url += `&strategy=${strat}`;
     }
     if (symbol) url += `&symbol=${encodeURIComponent(symbol)}`;

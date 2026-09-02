@@ -30,7 +30,7 @@ async function loadAnalysis() {
     const endpoint = _mode === 'paper' ? '/api/analysis' : '/api/real-analysis';
     let url = `${endpoint}?days=${days}`;
     if (_mode === 'paper') {
-        const strat = (typeof qtStrategy === 'function') ? qtStrategy() : '';
+        const strat = localStorage.getItem('qt_strategy') || '';
         url += `&strategy=${strat}`;
     }
     const res = await fetch(url);

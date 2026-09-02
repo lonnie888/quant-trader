@@ -39,7 +39,7 @@
 
     if (mode === 'paper') {
         // === 模拟盘数据 ===
-        const strat = (typeof qtStrategy === 'function') ? qtStrategy() : '';
+        const strat = localStorage.getItem('qt_strategy') || '';
         try {
             const sRes = await fetch('/api/summary?strategy=' + strat);
             if (sRes.ok) {

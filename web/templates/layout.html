@@ -156,17 +156,14 @@
         });
 
         // ── 双策略切换 (PPO 1h 账本 / MR15m 15m 账本) ─────────────────
-        // 存储于 localStorage, 各页面 JS 通过 qtStrategy() 读取并附加到 API 请求
-        function qtStrategy() {
-            return localStorage.getItem('qt_strategy') || '';
-        }
+        // 存储于 localStorage, 各页面 JS 直接读取并附加到 API 请求
         function setStrategy(s) {
             localStorage.setItem('qt_strategy', s);
             location.reload();
         }
         // 高亮当前策略按钮
         (function() {
-            const s = qtStrategy();
+            const s = localStorage.getItem('qt_strategy') || '';
             const ppbBtn = document.getElementById('strat-btn-ppb');
             const mrBtn = document.getElementById('strat-btn-mr15m');
             if (!ppbBtn) return;
