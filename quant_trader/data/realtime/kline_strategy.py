@@ -293,6 +293,17 @@ class KlineStrategyLoop:
             data_age = (now - last_time).total_seconds() / 60
         else:
             data_age = 999
+        # ⚠️ 关键修复: 最后一根 bar 未收盘时禁止判定信号 (catch-up/补扫用中间价开仓的 bug)
+        # 1h bar 收盘于 start+60min; 15m bar 收盘于 start+15min。若当前未到收盘点 → 跳过,
+        # 等 WS 推送真正收盘 (k.x=true) 再判定, 保证实盘信号与回测(仅收盘价判定)完全对齐。
+        try:
+            _tf_min = {"1h": 60, "15m": 15}.get(self.timeframe, 60)
+            if hasattr(last_time, 'tz') and last_time.tz:
+                bar_end = last_time + pd.Timedelta(minutes=_tf_min)
+                if bar_end > pd.Timestamp(now):
+                    return  # 未收盘 bar: 用中间价判定会与回测脱节
+        except Exception:
+            pass
         if data_age > 90:
             # 数据过旧，尝试从 Binance 拉取最新数据
             try:
