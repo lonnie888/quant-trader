@@ -101,6 +101,11 @@
                 <button id="mode-btn-real" class="mode-btn" onclick="setMode('real')">实盘</button>
                 <button id="mode-btn-paper" class="mode-btn" onclick="setMode('paper')">模拟</button>
             </div>
+            <!-- 双策略切换: PPO (1h) / MR15m (15m) — 仅模拟盘(paper账本)视图生效 -->
+            <div class="mode-toggle" id="strategy-toggle-wrap">
+                <button id="strat-btn-ppb" class="mode-btn" onclick="setStrategy('')">PPO·1h</button>
+                <button id="strat-btn-mr15m" class="mode-btn" onclick="setStrategy('mr15m')">MR15m·15m</button>
+            </div>
             <a href="/logout" class="nav-link block sm:inline ml-auto" style="color:#848e9c;">退出</a>
         </div>
     </nav>
@@ -149,6 +154,32 @@
                 paperBtn.style.fontWeight = 'bold';
             }
         });
+
+        // ── 双策略切换 (PPO 1h 账本 / MR15m 15m 账本) ─────────────────
+        // 存储于 localStorage, 各页面 JS 通过 qtStrategy() 读取并附加到 API 请求
+        function qtStrategy() {
+            return localStorage.getItem('qt_strategy') || '';
+        }
+        function setStrategy(s) {
+            localStorage.setItem('qt_strategy', s);
+            location.reload();
+        }
+        // 高亮当前策略按钮
+        (function() {
+            const s = qtStrategy();
+            const ppbBtn = document.getElementById('strat-btn-ppb');
+            const mrBtn = document.getElementById('strat-btn-mr15m');
+            if (!ppbBtn) return;
+            if (s === 'mr15m') {
+                mrBtn.style.background = 'rgba(240,185,11,0.25)';
+                mrBtn.style.color = '#f0b90b';
+                mrBtn.style.fontWeight = 'bold';
+            } else {
+                ppbBtn.style.background = 'rgba(240,185,11,0.25)';
+                ppbBtn.style.color = '#f0b90b';
+                ppbBtn.style.fontWeight = 'bold';
+            }
+        })();
     </script>
 </body>
 </html>

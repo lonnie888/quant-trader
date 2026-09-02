@@ -1,0 +1,125 @@
+//@version=6
+// ============================================================
+// Pump Pullback Strategy — TradingView Pine Script v6
+// 对应 quant_trader/quant_trader/strategy/library/pump_pullback.py
+//
+// 逻辑 (与 Python 版逐条对应):
+//   1. 泵检测: 最近 pump_window 根内最高价相对窗口起点收盘价涨幅 >= pump_threshold
+//   2. 回撤区间: retr = 1 - close/pump_high ∈ [pullback_min, pullback_max]
+//   3. 缩量回调: 最近4根均量 <= vol_shrink × 泵窗口最大量
+//   4. EMA 确认: trigger_pct<=0 时跳过; 否则 close >= ema×(1+trigger_pct)
+//   5. 二次放量: vol_recover<=1.0 时跳过; 否则最近7根均量 >= vol_recover×回调均量
+//   6. 冷却期: 上次平仓后 >= cooldown 根才允许再入场
+//   7. 持仓中: SL 优先 (柱内先低后高), 其次 TP, 超时 hold_bars 平仓
+//
+// v6 关键变化:
+//   - display.all → display.pane
+//   - var 在 if 内重新赋值: 用 [var_name] := value 语法 (v6 保留 var)
+//   - 所有 ta. 函数必须在全局作用域每根K线调用
+// ============================================================
+strategy("Pump Pullback (Pine v6)", overlay=true,
+     initial_capital=100, default_qty_type=strategy.percent_of_equity,
+     default_qty_value=10,            // 10% 保证金 -> 对应 margin_pct=0.10
+     commission_type=strategy.commission.percent, commission_value=0.04,
+     margin_long=20,                  // 20% 保证金率 -> 5x 杠杆
+     calc_on_order_fills=true,
+     calc_on_every_tick=true,         // 柱内触发 SL/TP 与 Python 回测一致
+     process_orders_on_close=true)    // (v6 移除 explicit_plot_zones - 只 indicator 才有)
+
+// ---------- 参数 (对应 config/strategies.yaml) ----------
+pump_window    = input.int(12,    "Pump 检测窗口 (bars)",   minval=2)
+pump_threshold = input.float(0.13, "泵阈值 (>=13%)",          step=0.01)
+pullback_min   = input.float(0.05, "回撤下限 (5%)",           step=0.01)
+pullback_max   = input.float(0.30, "回撤上限 (30%)",          step=0.01)
+vol_shrink     = input.float(0.80, "缩量系数 (回调量<=泵量×0.8)")
+vol_recover    = input.float(1.00, "放量系数 (二次量>=回调量×1.0)")
+trigger_pct    = input.float(0.00, "EMA 触发溢价 (0=跳过)",   step=0.001)
+ema_period     = input.int(12,    "EMA 周期",                minval=2)
+cooldown       = input.int(12,    "冷却期 (bars)",            minval=0)
+hold_bars      = input.int(48,    "最大持仓 (bars)",          minval=1)
+stop_loss_pct  = input.float(0.12, "止损 (12%)",              step=0.01)
+take_profit_pct= input.float(0.25, "止盈 (25%)",              step=0.01)
+pump_lookback  = input.int(96,    "泵信号有效期 (bars)",      minval=1)
+
+// ---------- 1. 泵检测 (全局, 每根K线计算) ----------
+winHigh   = ta.highest(high, pump_window)
+baseClose = close[pump_window - 1]
+pumpPct   = (winHigh / baseClose) - 1.0
+pumpOK    = not na(baseClose) and baseClose > 0 and pumpPct >= pump_threshold
+
+// 找泵高点位置和泵成交量 (全局, 每根K线计算)
+hiOff     = ta.highestbars(high, pump_window)
+hiIdx     = bar_index + hiOff
+pumpWinVol= ta.highest(volume, pump_window)
+
+// 记录泵高点 / 泵 bar 位置 / 泵成交量
+var float pumpHigh = na
+var int   pumpBar  = -1
+var float pumpVol  = na
+if pumpOK and strategy.position_size == 0
+    if hiIdx >= pumpBar
+        pumpHigh := winHigh
+        pumpBar  := hiIdx
+        pumpVol  := pumpWinVol
+
+pumpActive = pumpBar >= 0 and (bar_index - pumpBar) <= pump_lookback
+
+// ---------- 2. 回撤幅度 ----------
+retr       = pumpActive and not na(pumpHigh) ? 1.0 - (close / pumpHigh) : na
+pullbackOK = not na(retr) and retr >= pullback_min and retr <= pullback_max
+
+// ---------- 3. 缩量回调 ----------
+recentVol      = ta.sma(volume, 4)
+volumeShrinkOK = not na(pumpVol) and recentVol <= vol_shrink * pumpVol
+
+// ---------- 4. EMA 确认 ----------
+ema      = ta.ema(close, ema_period)
+emaOK    = trigger_pct <= 0 or close >= ema * (1 + trigger_pct)
+
+// ---------- 5. 二次放量 ----------
+shortVol        = ta.sma(volume, 7)
+volumeRecoverOK = vol_recover <= 1.0 or shortVol >= vol_recover * recentVol
+
+// ---------- 6. 冷却期 ----------
+var int barsSinceExit = cooldown   // 启动即允许入场 (对齐 Python 初始值)
+cooldownOK = barsSinceExit >= cooldown
+
+// ---------- 进场信号 ----------
+longCondition = (pumpOK and pumpActive and pullbackOK and volumeShrinkOK
+                and emaOK and volumeRecoverOK and cooldownOK
+                and strategy.position_size == 0)
+
+if longCondition
+    strategy.entry("Long", strategy.long)
+    barsSinceExit := 0
+
+// 空仓时每根 bar 累计冷却计数
+if strategy.position_size == 0
+    barsSinceExit := math.min(barsSinceExit + 1, 9999)
+
+// ---------- 7. 持仓管理: SL (优先) / TP / hold 到期 ----------
+if strategy.position_size != 0
+    entryPrice = strategy.position_avg_price
+    slPrice = entryPrice * (1 - stop_loss_pct)
+    tpPrice = entryPrice * (1 + take_profit_pct)
+
+    // 用两个独立 exit order, calc_on_every_tick=true 时按柱内实际价格路径触发
+    // (先触 SL 就 SL 平, 先触 TP 就 TP 平 — 对齐 Python "SL 优先" 的保守行为)
+    strategy.exit("SL", "Long", stop=slPrice)
+    if take_profit_pct > 0
+        strategy.exit("TP", "Long", limit=tpPrice)
+
+    // hold_bars 到期按市价平
+    barsInTrade = bar_index - strategy.opentrades.entry_bar_index(0)
+    if barsInTrade >= hold_bars
+        strategy.close("Long", comment="time")
+
+// ---------- 可视化 ----------
+plotshape(longCondition, style=shape.triangleup, location=location.belowbar,
+     color=color.green, size=size.small, text="PUMP")
+plot(ema, color=color.blue, linewidth=1, title="EMA")
+bgcolor(strategy.position_size != 0 ? color.new(color.green, 85) : na)
+// 泵高点参考线 (仅 pumpActive 时显示)
+pumpHighLine = pumpActive and not na(pumpHigh) ? pumpHigh : na
+plot(pumpHighLine, color=color.orange, linewidth=1, style=plot.style_line,
+     title="Pump High", display=display.pane)

@@ -18,17 +18,34 @@ LEDGER = ROOT / "reports" / "paper" / "positions.jsonl"
 RECAP_DIR = ROOT / "reports" / "paper"
 FAPI = "https://fapi.binance.com/fapi/v1/klines"
 
+# 双策略独立账本: ?strategy= 选择查看哪个策略（paper 回测/历史/持仓）
+#   - "" / "ppb" / "pump"  -> positions.jsonl (PumpPullbackOpt 1h, 默认)
+#   - "mr15m" / "mr15" / "mean_reversion" -> positions_15m.jsonl (MeanReversion 15m)
+LEDGERS = {
+    "": "positions.jsonl",
+    "ppb": "positions.jsonl",
+    "pump": "positions.jsonl",
+    "pump_pullback_opt": "positions.jsonl",
+    "mr15m": "positions_15m.jsonl",
+    "mr15": "positions_15m.jsonl",
+    "mean_reversion": "positions_15m.jsonl",
+    "mean_reversion_15m": "positions_15m.jsonl",
+}
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 
-def _read_ledger() -> list[dict]:
+def _ledger_for(strategy: str = "") -> Path:
+    """根据 strategy 参数返回对应账本路径（默认 PPO 1h 账本）。"""
+    fname = LEDGERS.get(strategy, LEDGERS[""])
+    return RECAP_DIR / fname
+
+
+def _read_ledger(strategy: str = "") -> list[dict]:
     """Read all events from the append-only JSONL ledger."""
-    if not LEDGER.exists():
+    path = _ledger_for(strategy)
+    if not path.exists():
         return []
     events: list[dict] = []
-    with open(LEDGER, "r", encoding="utf-8") as f:
+    with open(path, "r", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if not line:
@@ -276,7 +293,8 @@ def _compute_summary(open_evs: list[dict], closed_events: list[dict]) -> dict:
 
 @api_bp.route("/summary")
 def summary():
-    events = _read_ledger()
+    strategy = request.args.get("strategy", "", type=str)
+    events = _read_ledger(strategy)
     open_evs = _current_open_positions(events)
     summary_data = _compute_summary(open_evs, events)
     # Add initial capital so front-end can compute paper equity
@@ -372,7 +390,8 @@ def real_equity():
 
 @api_bp.route("/positions")
 def positions():
-    events = _read_ledger()
+    strategy = request.args.get("strategy", "", type=str)
+    events = _read_ledger(strategy)
     open_evs = _current_open_positions(events)
     data = _build_positions_data(open_evs)
     return jsonify(data)
@@ -380,7 +399,8 @@ def positions():
 
 @api_bp.route("/history")
 def history():
-    events = _read_ledger()
+    strategy = request.args.get("strategy", "", type=str)
+    events = _read_ledger(strategy)
     page = request.args.get("page", 1, type=int)
     per_page = request.args.get("per_page", 20, type=int)
     symbol_filter = request.args.get("symbol", "", type=str).upper()
@@ -605,7 +625,8 @@ def real_history():
 def analysis():
     """Paper-ledger analysis data (same shape as /real-analysis)."""
     from collections import defaultdict
-    events = _read_ledger()
+    strategy = request.args.get("strategy", "", type=str)
+    events = _read_ledger(strategy)
     days = request.args.get("days", 7, type=int)
 
     # Collect closed trades
@@ -902,7 +923,8 @@ def klines(symbol):
         })
 
     # Build markers from the ledger for this symbol
-    events = _read_ledger()
+    strategy = request.args.get("strategy", "", type=str)
+    events = _read_ledger(strategy)
     markers = []
     for ev in events:
         if _strip_symbol(ev["symbol"]).upper() == symbol.upper():

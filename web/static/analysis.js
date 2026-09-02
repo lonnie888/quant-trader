@@ -26,9 +26,14 @@ async function _getMode() {
 
 async function loadAnalysis() {
     const days = document.getElementById('filter-days').value;
-    // 根据模式选择 API
+    // 根据模式选择 API (paper 额外带 strategy 参数切换双策略账本)
     const endpoint = _mode === 'paper' ? '/api/analysis' : '/api/real-analysis';
-    const res = await fetch(`${endpoint}?days=${days}`);
+    let url = `${endpoint}?days=${days}`;
+    if (_mode === 'paper') {
+        const strat = (typeof qtStrategy === 'function') ? qtStrategy() : '';
+        url += `&strategy=${strat}`;
+    }
+    const res = await fetch(url);
     const d = await res.json();
     if (d.error) { console.error(d.error); return; }
 

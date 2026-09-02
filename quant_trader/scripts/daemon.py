@@ -51,28 +51,38 @@ from pathlib import Path
 
 _COOLDOWN_FILE = Path("reports/paper/cooldown.json")
 _COOLDOWN_SYMBOLS: dict = {}  # sym_short -> expiry_timestamp (UTC)
+# 双策略独立冷却文件映射（按账本路径派生）
+def _cooldown_file_for(log_path) -> Path:
+    """由账本路径推导冷却文件: positions.jsonl -> cooldown.json, positions_15m.jsonl -> cooldown_15m.json."""
+    p = Path(log_path)
+    stem = p.stem  # "positions_15m"
+    if stem == "positions":
+        return Path("reports/paper/cooldown.json")
+    return Path(f"reports/paper/{stem.replace('positions', 'cooldown')}.json")
 
-def _load_cooldowns():
+def _load_cooldowns(cooldown_path: Path | None = None):
     """Load cooldown symbols from file."""
     global _COOLDOWN_SYMBOLS
+    cf = cooldown_path or _COOLDOWN_FILE
     try:
-        if _COOLDOWN_FILE.exists():
-            data = json.loads(_COOLDOWN_FILE.read_text())
+        if cf.exists():
+            data = json.loads(cf.read_text())
             now = time.time()
             _COOLDOWN_SYMBOLS = {}
             for sym, expiry in data.items():
                 if expiry > now:
                     _COOLDOWN_SYMBOLS[sym] = expiry
             if _COOLDOWN_SYMBOLS:
-                log.info("loaded %d cooldowns from file", len(_COOLDOWN_SYMBOLS))
+                log.info("loaded %d cooldowns from %s", len(_COOLDOWN_SYMBOLS), cf)
     except Exception:
         _COOLDOWN_SYMBOLS = {}
 
-def _save_cooldowns():
+def _save_cooldowns(cooldown_path: Path | None = None):
     """Save cooldown symbols to file."""
+    cf = cooldown_path or _COOLDOWN_FILE
     try:
-        _COOLDOWN_FILE.parent.mkdir(parents=True, exist_ok=True)
-        _COOLDOWN_FILE.write_text(json.dumps(_COOLDOWN_SYMBOLS, indent=2))
+        cf.parent.mkdir(parents=True, exist_ok=True)
+        cf.write_text(json.dumps(_COOLDOWN_SYMBOLS, indent=2))
     except Exception:
         pass
 
@@ -87,11 +97,11 @@ def _is_cooldown(sym: str) -> bool:
         _save_cooldowns()
     return sym in _COOLDOWN_SYMBOLS
 
-def _add_cooldown(sym_short: str, hours: int = 24):
+def _add_cooldown(sym_short: str, hours: int = 24, cooldown_path: Path | None = None):
     """Add symbol to trade cooldown set (avoid re-entry after SL)."""
     expiry = time.time() + hours * 3600
     _COOLDOWN_SYMBOLS[sym_short] = expiry
-    _save_cooldowns()
+    _save_cooldowns(cooldown_path)
     log.info("cooldown added %s (until %s)", sym_short,
              time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(expiry)))
 # Daily circuit breaker: when tripped, no new trades today
@@ -179,17 +189,23 @@ def _check_circuit_breaker(settings=None, broker=None) -> bool:
     return False
 
 async def _refresh_watchlist(broker, settings, kline_loop=None, top_n: int = 50,
-                             refresh_event: asyncio.Event | None = None):
+                             refresh_event: asyncio.Event | None = None,
+                             watchlist: list[str] | None = None,
+                             log_path: Path | None = None):
     """Periodic task: scan top-N gainers, update WS subscription.
-    Strategy execution is handled by WS kline loop (real-time, on bar close)."""
+    Strategy execution is handled by WS kline loop (real-time, on bar close).
+
+    watchlist: 若提供固定币池则使用之 (双策略模式: 每策略独立 loop + 独立币池),
+               否则动态扫涨幅榜.
+    log_path: 该 loop 的独立账本（用于熔断器位置追踪）.
+    """
     # 主流币/中文币：pump 信号少或无法下单，排除
     MAINSTREAM = {
         "比特币", "币安人生", "我踏马来了", "龙虾",
     }
     global _LATEST_GAINERS
-    # 固定币池（PumpPullbackOpt 2026 首选 11 币, 由 Jesse 回测验证）
-    # 若设置了 FIXED_WATCHLIST 则不再动态扫描涨幅榜
-    FIXED_WATCHLIST: list[str] = [
+    # 固定币池 (PumpPullbackOpt 20币) — 无 watchlist 参数时用默认
+    FIXED_WATCHLIST: list[str] = watchlist if watchlist is not None else [
         # 原 11 币池 (PumpPullbackOpt)
         "MUBARAKUSDT", "COLLECTUSDT", "TUTUSDT", "KITEUSDT", "PROMUSDT",
         "SIRENUSDT", "GWEIUSDT", "USELESSUSDT", "BANKUSDT", "MOVRUSDT",
@@ -250,7 +266,7 @@ async def _refresh_watchlist(broker, settings, kline_loop=None, top_n: int = 50,
 
             # 熔断器检查（熔断时通知飞书，不清仓）
             global _POSITIONS_PATH
-            _POSITIONS_PATH = Path("reports/paper/positions.jsonl")
+            _POSITIONS_PATH = log_path or Path("reports/paper/positions.jsonl")
             if _check_circuit_breaker(settings, broker):
                 log.warning("circuit breaker active: skipping this cycle")
                 if refresh_event is not None:
@@ -348,17 +364,21 @@ async def _data_health_loop(kline_loop, stop_event, interval: int = 600):
         except Exception as ex:
             log.warning("data health loop error: %s", ex)
 
-async def _feishu_signal_loop(settings, stop_event, kline_loop=None):
-    """每1小时K线收盘时发飞书量化信号卡片（涨幅榜/开仓/风控阻挡）。"""
+async def _feishu_signal_loop(settings, stop_event, kline_loop=None, label: str = ""):
+    """K线收盘时发飞书量化信号卡片（涨幅榜/开仓/风控阻挡）。
+
+    对齐周期取 kline_loop.timeframe (1h 或 15m), label 区分双策略卡片.
+    """
     from datetime import datetime, timezone
     from quant_trader.execution.notifier import FeishuNotifier, FeishuCardBuilder
     from quant_trader.execution.paper_ledger import get_open_positions, get_all_positions
     from pathlib import Path
     while not stop_event.is_set():
-        # 对齐到下一个1小时整点（xx:00）
+        # 对齐到下一个整点 (周期秒: 1h=3600, 15m=900)
+        tf_sec = 3600 if getattr(kline_loop, "timeframe", "1h") == "1h" else 900
         import time as _time
         now = _time.time()
-        next_hour = (int(now) // 3600 + 1) * 3600
+        next_hour = (int(now) // tf_sec + 1) * tf_sec
         wait = next_hour - now + 5
         try:
             await asyncio.wait_for(stop_event.wait(), timeout=max(wait, 1))
@@ -373,7 +393,8 @@ async def _feishu_signal_loop(settings, stop_event, kline_loop=None):
                 continue
             feishu = FeishuNotifier(webhook_url=fw)
             today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-            ppath = Path("reports/paper/positions.jsonl")
+            # 用 loop 自己的账本（双策略独立）
+            ppath = getattr(kline_loop, "log_path", None) or Path("reports/paper/positions.jsonl")
             all_events = get_all_positions(ppath)
             real_open = len(get_open_positions(ppath))
 
@@ -397,9 +418,9 @@ async def _feishu_signal_loop(settings, stop_event, kline_loop=None):
                     if pnl > 0: wins += 1
                     elif pnl < 0: losses += 1
 
-            # 从 signal_log 获取最近15分钟的信号
+            # 从 signal_log 获取最近一个周期的信号 (周期感知: 1h=3600s, 15m=900s)
             import time as _time
-            cutoff = _time.time() - 900  # 15分钟前
+            cutoff = _time.time() - tf_sec
             recent_open = []
             recent_blocked = []
             if kline_loop and hasattr(kline_loop, 'signal_log'):
@@ -416,8 +437,9 @@ async def _feishu_signal_loop(settings, stop_event, kline_loop=None):
             # 涨幅榜TOP30
             gainers = [(s, p) for s, p in _LATEST_GAINERS[:30]]
 
+            card_title_tag = f"[{label}] " if label else ""
             card = FeishuCardBuilder.make_daily_summary(
-                as_of=today, gainers=gainers,
+                as_of=card_title_tag + today, gainers=gainers,
                 accepted=len(recent_open), blocked=len(recent_blocked),
                 open_pos=real_open,
                 opened_symbols=recent_open,
@@ -427,7 +449,9 @@ async def _feishu_signal_loop(settings, stop_event, kline_loop=None):
         except Exception:
             pass
 
-async def _positions_report_loop(settings, stop_event, watchlist_event: asyncio.Event, broker=None):
+async def _positions_report_loop(settings, stop_event, watchlist_event: asyncio.Event,
+                                 broker=None, log_path: Path | None = None,
+                                 label: str = ""):
     """Send positions check card to Feishu when watchlist refresh completes.
     Uses real account data when available, falls back to paper ledger."""
     from datetime import datetime, timezone, timedelta
@@ -436,7 +460,7 @@ async def _positions_report_loop(settings, stop_event, watchlist_event: asyncio.
     import requests as sync_req
     
     PROXY = getattr(settings, "proxy", None)
-    positions_path = Path("reports/paper/positions.jsonl")
+    positions_path = log_path or Path("reports/paper/positions.jsonl")
 
     while not stop_event.is_set():
         try:
@@ -614,7 +638,7 @@ async def _positions_report_loop(settings, stop_event, watchlist_event: asyncio.
                 )
                 fw = getattr(settings.notify, "feishu_webhook", None)
                 FeishuNotifier(webhook_url=fw).send_card(card)
-                log.info("positions report sent (paper ledger): %d open", len(open_pos))
+                log.info("positions report sent (paper ledger %s): %d open", label or "PPO", len(open_pos))
         except Exception as ex:
             log.warning("positions report failed: %s", ex)
 
@@ -650,14 +674,15 @@ async def _daily_recap_loop(settings, stop_event):
             log.warning("daily recap failed: %s", ex)
 
 
-async def _rest_poll_loop(settings, kline_loop, sltp, stop_event):
+async def _rest_poll_loop(settings, kline_loop, sltp, stop_event,
+                          log_path: Path | None = None):
     """Fallback REST polling when WebSocket is unavailable.
     Polls mark price every 15s. Uses aiohttp to avoid blocking the event loop."""
     import aiohttp
     from quant_trader.execution.paper_ledger import get_all_positions
     from pathlib import Path
 
-    positions_path = Path("reports/paper/positions.jsonl")
+    positions_path = log_path or Path("reports/paper/positions.jsonl")
     FAPI_TICKER = "https://fapi.binance.com/fapi/v1/ticker/price"
     PROXY = getattr(settings, "proxy", None)
 
@@ -882,58 +907,59 @@ async def main():
     feishu_webhook = getattr(settings.notify, "feishu_webhook", None)
     feishu = FeishuNotifier(webhook_url=feishu_webhook)
 
-    def _on_sltp_close(closed: dict):
-        """Called by sltp.on_mark when a position is auto-closed."""
-        try:
-            ev = closed
-            sym_short = ev.get("symbol", "").split("/")[0].split(":")[0]
-            if ev.get("exit_reason") == "stop_loss":
-                _add_cooldown(sym_short)
-            # 先发飞书通知（即使 broker.exit 失败也要通知）
-            entry = float(ev.get("entry_price", 0))
-            exit_ = float(ev.get("exit_price", 0))
-            lev = float(ev.get("leverage", 3.0))
-            # 计算PnL（如果dict里没有预计算的值）
-            pnl_raw = ev.get("pnl_pct_lev")
-            if pnl_raw is not None:
-                pnl = float(pnl_raw)
-            else:
-                pnl = (exit_ - entry) / entry * lev if entry > 0 else 0.0
-            # 获取最大浮盈/浮亏（如果sltp tracking了）
-            max_fav = float(ev.get("max_fav_pct", 0) or 0)
-            max_adv = float(ev.get("max_adv_pct", 0) or 0)
-            reason = ev.get("exit_reason", "")
-            sym = ev.get("symbol", "")
-            card = FeishuCardBuilder.make_position_close(
-                symbol=sym, exit_reason=reason,
-                entry_price=entry, exit_price=exit_,
-                pnl_pct_lev=pnl,
-                max_fav_pct=max_fav, max_adv_pct=max_adv,
-            )
-            feishu.send_card(card)
-            log.info("feishu close notify: %s reason=%s pnl=%+.2f%%", sym, reason, pnl*100)
-            # 检查是否还有持仓，没有就保存权益快照
+    def _make_on_sltp_close(_this_sltp):
+        """工厂: 为指定账本的 SLTPWatch 生成 close 回调（双策略独立账本/冷却/通知）。"""
+        def _on_sltp_close(closed: dict):
+            """Called by sltp.on_mark when a position is auto-closed."""
             try:
-                from quant_trader.execution.paper_ledger import get_open_positions
-                if len(get_open_positions(Path("reports/paper/positions.jsonl"))) == 0:
-                    _save_equity_snapshot(broker)
-            except Exception:
-                pass
-            # 再关 demo 仓位（单独 try，失败不影响通知）
-            try:
-                broker.exit(
-                    position_id=int(ev.get("id", 0)),
-                    exit_ts=ev.get("exit_ts", datetime.now(timezone.utc).isoformat()),
-                    exit_price=float(ev.get("exit_price", 0)),
-                    exit_reason=ev.get("exit_reason", ""),
-                    log_path=Path("reports/paper/positions.jsonl"),
+                ev = closed
+                sym_short = ev.get("symbol", "").split("/")[0].split(":")[0]
+                if ev.get("exit_reason") == "stop_loss":
+                    _add_cooldown(sym_short, cooldown_path=_cooldown_file_for(_this_sltp.log_path))
+                # 先发飞书通知（即使 broker.exit 失败也要通知）
+                entry = float(ev.get("entry_price", 0))
+                exit_ = float(ev.get("exit_price", 0))
+                lev = float(ev.get("leverage", 3.0))
+                # 计算PnL（如果dict里没有预计算的值）
+                pnl_raw = ev.get("pnl_pct_lev")
+                if pnl_raw is not None:
+                    pnl = float(pnl_raw)
+                else:
+                    pnl = (exit_ - entry) / entry * lev if entry > 0 else 0.0
+                # 获取最大浮盈/浮亏（如果sltp tracking了）
+                max_fav = float(ev.get("max_fav_pct", 0) or 0)
+                max_adv = float(ev.get("max_adv_pct", 0) or 0)
+                reason = ev.get("exit_reason", "")
+                sym = ev.get("symbol", "")
+                card = FeishuCardBuilder.make_position_close(
+                    symbol=sym, exit_reason=reason,
+                    entry_price=entry, exit_price=exit_,
+                    pnl_pct_lev=pnl,
+                    max_fav_pct=max_fav, max_adv_pct=max_adv,
                 )
+                feishu.send_card(card)
+                log.info("feishu close notify: %s reason=%s pnl=%+.2f%%", sym, reason, pnl*100)
+                # 检查是否还有持仓，没有就保存权益快照
+                try:
+                    from quant_trader.execution.paper_ledger import get_open_positions
+                    if len(get_open_positions(_this_sltp.log_path)) == 0:
+                        _save_equity_snapshot(broker)
+                except Exception:
+                    pass
+                # 再关 demo 仓位（单独 try，失败不影响通知）
+                try:
+                    broker.exit(
+                        position_id=int(ev.get("id", 0)),
+                        exit_ts=ev.get("exit_ts", datetime.now(timezone.utc).isoformat()),
+                        exit_price=float(ev.get("exit_price", 0)),
+                        exit_reason=ev.get("exit_reason", ""),
+                        log_path=_this_sltp.log_path,
+                    )
+                except Exception as ex:
+                    log.warning("demo close failed %s: %s", sym, ex)
             except Exception as ex:
-                log.warning("demo close failed %s: %s", sym, ex)
-        except Exception as ex:
-            log.warning("feishu SL/TP notify failed: %s", ex)
-
-    sltp.on_close = _on_sltp_close
+                log.warning("feishu SL/TP notify failed: %s", ex)
+        return _on_sltp_close
 
     # Create brokers (paper + demo dual-run)
     proxy = getattr(settings, "proxy", None)
@@ -943,6 +969,18 @@ async def main():
     broker_mode = "paper"
     log.info("broker mode: %s (PAPER 模拟实盘 100 USDT, demo 暂不使用)", broker_mode)
     broker = broker_paper
+
+    # 双策略独立账本路径
+    #  - PPO (1h): reports/paper/positions.jsonl （保持历史兼容）
+    #  - MR15 (15m): reports/paper/positions_15m.jsonl （独立账本）
+    PPO_LEDGER = Path("reports/paper/positions.jsonl")
+    MR15_LEDGER = Path("reports/paper/positions_15m.jsonl")
+
+    # 双 SLTPWatch（各自账本）—— SL/TP 平仓回调也按账本分发
+    sltp_1h = SLTPWatch(log_path=PPO_LEDGER)
+    sltp_15m = SLTPWatch(log_path=MR15_LEDGER)
+    sltp_1h.on_close = _make_on_sltp_close(sltp_1h)
+    sltp_15m.on_close = _make_on_sltp_close(sltp_15m)
 
     # Strategy loop on kline close (WebSocket, manages own connection)
     # Market filter: skip opening when market conditions are bad
@@ -971,7 +1009,20 @@ async def main():
     else:
         log.info("market filter disabled (config.market_filter.enabled=false or missing)")
 
-    kline_loop = KlineStrategyLoop(settings=settings, broker=broker, market_filter=market_filter)
+    # 双策略独立 loop:
+    #  - kline_loop_1h:  PumpPullbackOpt (20币, 1h) — 原策略, 账本 positions.jsonl
+    #  - kline_loop_15m: MeanReversion15m (15币, 15m) — 新短线策略, 账本 positions_15m.jsonl
+    kline_loop = KlineStrategyLoop(settings=settings, broker=broker, market_filter=market_filter,
+                                   timeframe="1h", strategy_names=["pump_pullback_opt"],
+                                   log_path=PPO_LEDGER)
+    MR15_POOL: list[str] = [
+        "SOMIUSDT", "BEAMXUSDT", "LABUSDT", "ESPORTSUSDT", "1000BONKUSDT", "BTRUSDT",
+        "HUSDT", "USELESSUSDT", "MOVRUSDT", "GRASSUSDT",
+        "TAUSDT", "GRIFFAINUSDT", "MINAUSDT", "LSKUSDT", "COWUSDT",
+    ]
+    kline_loop_15m = KlineStrategyLoop(settings=settings, broker=broker, market_filter=None,
+                                       timeframe="15m", strategy_names=["mean_reversion_15m"],
+                                       log_path=MR15_LEDGER)
 
     # Graceful shutdown
     stop_event = asyncio.Event()
@@ -1013,8 +1064,9 @@ async def main():
                 except asyncio.TimeoutError:
                     pass
 
-    # Load persisted cooldowns from file
-    _load_cooldowns()
+    # Load persisted cooldowns from file（双策略各自冷却文件）
+    _load_cooldowns(PPO_LEDGER and _cooldown_file_for(PPO_LEDGER))
+    _load_cooldowns(_cooldown_file_for(MR15_LEDGER))
 
     # Reset circuit breaker on startup (don't count historical losses)
     global _CIRCUIT_BROKEN_DATE, _CIRCUIT_SESSION_START
@@ -1023,12 +1075,21 @@ async def main():
     log.info("circuit breaker reset on startup (session start %.0f)", _CIRCUIT_SESSION_START)
 
     tasks = [
-        asyncio.create_task(_supervised("rest_poll", lambda: _rest_poll_loop(settings, kline_loop, sltp, stop_event)), name="rest_poll"),
-        asyncio.create_task(_supervised("watchlist", lambda: _refresh_watchlist(broker, settings, kline_loop=kline_loop, refresh_event=refresh_event)), name="watchlist"),
+        # 1h (PPO): REST 轮询 + SL/TP watch 用 positions.jsonl
+        asyncio.create_task(_supervised("rest_poll", lambda: _rest_poll_loop(settings, kline_loop, sltp_1h, stop_event, log_path=PPO_LEDGER)), name="rest_poll"),
+        # 15m (MR): REST 轮询 + SL/TP watch 用 positions_15m.jsonl
+        asyncio.create_task(_supervised("rest_poll_15m", lambda: _rest_poll_loop(settings, kline_loop_15m, sltp_15m, stop_event, log_path=MR15_LEDGER)), name="rest_poll_15m"),
+        asyncio.create_task(_supervised("watchlist", lambda: _refresh_watchlist(broker, settings, kline_loop=kline_loop, refresh_event=refresh_event, log_path=PPO_LEDGER)), name="watchlist"),
+        # 15m 短线策略独立 loop: 币池/策略/数据健康/信号卡片均独立
+        asyncio.create_task(_supervised("watchlist_15m", lambda: _refresh_watchlist(broker, settings, kline_loop=kline_loop_15m, watchlist=MR15_POOL, log_path=MR15_LEDGER)), name="watchlist_15m"),
         asyncio.create_task(_supervised("daily_recap", lambda: _daily_recap_loop(settings, stop_event)), name="daily_recap"),
         asyncio.create_task(_supervised("feishu_signal", lambda: _feishu_signal_loop(settings, stop_event, kline_loop=kline_loop)), name="feishu_signal"),
+        asyncio.create_task(_supervised("feishu_signal_15m", lambda: _feishu_signal_loop(settings, stop_event, kline_loop=kline_loop_15m, label="15m-MeanReversion")), name="feishu_signal_15m"),
         asyncio.create_task(_supervised("data_health", lambda: _data_health_loop(kline_loop, stop_event)), name="data_health"),
-        asyncio.create_task(_supervised("positions_report", lambda: _positions_report_loop(settings, stop_event, refresh_event, broker)), name="positions_report"),
+        asyncio.create_task(_supervised("data_health_15m", lambda: _data_health_loop(kline_loop_15m, stop_event)), name="data_health_15m"),
+        # 持仓报告: 1h/15m 各自账本独立发卡片
+        asyncio.create_task(_supervised("positions_report", lambda: _positions_report_loop(settings, stop_event, refresh_event, broker, log_path=PPO_LEDGER, label="PPO")), name="positions_report"),
+        asyncio.create_task(_supervised("positions_report_15m", lambda: _positions_report_loop(settings, stop_event, refresh_event, broker, log_path=MR15_LEDGER, label="MR15")), name="positions_report_15m"),
     ]
 
     # Market filter periodic refresh (4h by default)

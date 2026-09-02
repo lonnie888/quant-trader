@@ -34,15 +34,27 @@ class KlineStrategyLoop:
     """Manages WebSocket kline subscriptions and runs strategy on bar close."""
 
     def __init__(self, settings=None, broker=None, store: ParquetStore | None = None,
-                 cooldown_seconds: int = 3600, market_filter=None):
+                 cooldown_seconds: int = 3600, market_filter=None,
+                 timeframe: str = "1h", strategy_names: list[str] | None = None,
+                 log_path: Path | None = None):
         self.settings = settings or load_settings()
         self.store = store or ParquetStore(self.settings.data.storage_dir)
         self.strategies_cfg = "config/strategies.yaml"
         self.broker = broker
         self.cooldown_seconds = cooldown_seconds
         self.market_filter = market_filter  # 市场状态过滤器（可选）
+        self.timeframe = timeframe  # "1h" / "15m" — 驱动周期
+        self.strategy_names = strategy_names  # 限定运行的策略名(如 ["pump_pullback_opt"]), None=全部active
+        # 独立账本: 双策略各用各的 positions.jsonl（PPO 1h 默认, MR15m 用 positions_15m.jsonl）
+        self.log_path = log_path or Path("reports/paper/positions.jsonl")
+        # 独立冷却文件（同策略内 SL 冷却, 不跨策略）
+        self.cooldown_path = Path(f"reports/paper/cooldown{self._suffix(self.log_path)}.json")
         self._current_symbols: list[str] = []
-        self._instances = generate_instances(self.strategies_cfg)
+        all_instances = generate_instances(self.strategies_cfg)
+        if self.strategy_names:
+            self._instances = [(n, p, s) for n, p, s in all_instances if n in self.strategy_names]
+        else:
+            self._instances = all_instances
         self._ws = None
         self._ws_task: asyncio.Task | None = None
         self._ws_connecting = False  # 正在连接中，避免重复创建 task
@@ -50,6 +62,14 @@ class KlineStrategyLoop:
         self._mark_provider: Callable[[str], float | None] | None = None
         # 近期信号记录 [(timestamp, symbol, action, reason)]，action: open/blocked
         self.signal_log: list = []
+
+    @staticmethod
+    def _suffix(log_path: Path) -> str:
+        """从账本路径推导后缀: positions.jsonl -> '', positions_15m.jsonl -> '_15m'."""
+        name = Path(log_path).stem  # "positions_15m"
+        if name == "positions":
+            return ""
+        return name.replace("positions", "")  # "_15m"
 
     async def _preheat_data(self, symbols: list[str]):
         """为新加入的币种拉取 7 天历史 K 线数据到 store，避免信号延迟。
@@ -68,7 +88,7 @@ class KlineStrategyLoop:
                 start_ms = int((now - timedelta(days=7)).timestamp() * 1000)
                 end_ms = int(now.timestamp() * 1000)
                 store_sym = f"{sym[:-4]}/USDT:USDT" if sym.endswith("USDT") else sym + "/USDT:USDT"
-                url = f"{FAPI_KLINE}?symbol={sym}&interval=1h&startTime={start_ms}&endTime={end_ms}&limit=1000"
+                url = f"{FAPI_KLINE}?symbol={sym}&interval={self.timeframe}&startTime={start_ms}&endTime={end_ms}&limit=1000"
                 loop = asyncio.get_event_loop()
                 r = await loop.run_in_executor(None, lambda: _rq.get(url, timeout=30))
                 r.raise_for_status()
@@ -84,7 +104,7 @@ class KlineStrategyLoop:
                     _df = _pd.DataFrame(_rows)
                     _df["timestamp"] = _pd.to_datetime(_df["timestamp"], unit="ms", utc=True)
                     _df = _df.set_index("timestamp")
-                    self.store.save(store_sym, "1h", _df)
+                    self.store.save(store_sym, f"{self.timeframe}", _df)
                     return True
             except Exception:
                 return False
@@ -120,7 +140,7 @@ class KlineStrategyLoop:
                 self._ws.on(sym.upper(), self._handle) if self._ws else None
             if self._ws is not None:
                 from .ws_client import stream_kline
-                streams = [stream_kline(s, "1h") for s in added]
+                streams = [stream_kline(s, f"{self.timeframe}") for s in added]
                 await self._ws.subscribe(streams)
                 log.info("ws added %d symbols: %s", len(added), list(added)[:5])
             # 新币种立即拉历史数据，避免信号延迟
@@ -135,7 +155,7 @@ class KlineStrategyLoop:
 
         # 移除的币种取消订阅
         if removed and self._ws is not None:
-            streams = [stream_kline(s, "1h") for s in removed]
+            streams = [stream_kline(s, f"{self.timeframe}") for s in removed]
             await self._ws.unsubscribe(streams)
             log.info("ws removed %d symbols: %s", len(removed), list(removed)[:5])
 
@@ -169,7 +189,7 @@ class KlineStrategyLoop:
                 return
 
             proxy = getattr(self.settings, "proxy", None)
-            streams = [stream_kline(s, "1h") for s in self._current_symbols]
+            streams = [stream_kline(s, f"{self.timeframe}") for s in self._current_symbols]
 
             self._ws = FapiWS(proxy=proxy)
             for sym in self._current_symbols:
@@ -205,7 +225,7 @@ class KlineStrategyLoop:
         if not k:
             return
         sym_raw = data.get("s", "").upper()
-        interval = k.get("i", "1h")
+        interval = k.get("i", f"{self.timeframe}")
         if not k.get("x"):
             return  # bar not closed yet, skip
         log.info("[ws] 收盘 %s %s close=%s", sym_raw, interval, k.get("c"))
@@ -253,7 +273,7 @@ class KlineStrategyLoop:
         """
         import time as _time
         instances = generate_instances(self.strategies_cfg)
-        positions_path = Path("reports/paper/positions.jsonl")
+        positions_path = self.log_path
         all_events = get_all_positions(positions_path)
         now = datetime.now(timezone.utc)
         now_ts = now.isoformat()
@@ -261,7 +281,7 @@ class KlineStrategyLoop:
         sym_short = sym.split("/")[0].split(":")[0]
 
         # 1. 数据准备
-        df = self.store.load_local(sym, "1h") if local_only else self.store.load(sym, "1h")
+        df = self.store.load_local(sym, f"{self.timeframe}") if local_only else self.store.load(sym, f"{self.timeframe}")
         if df.empty or len(df) < 24:
             return
         if len(df) >= 2:
@@ -279,7 +299,7 @@ class KlineStrategyLoop:
                 import requests as _rq
                 from datetime import timedelta
                 api_sym = sym_short + "USDT"
-                url = f"https://fapi.binance.com/fapi/v1/klines?symbol={api_sym}&interval=1h&startTime={int((now-timedelta(days=7)).timestamp()*1000)}&endTime={int(now.timestamp()*1000)}&limit=1000"
+                url = f"https://fapi.binance.com/fapi/v1/klines?symbol={api_sym}&interval={self.timeframe}&startTime={int((now-timedelta(days=7)).timestamp()*1000)}&endTime={int(now.timestamp()*1000)}&limit=1000"
                 r = _rq.get(url, timeout=30)
                 if r.status_code == 200:
                     raw = r.json()
@@ -292,7 +312,7 @@ class KlineStrategyLoop:
                         _df = pd.DataFrame(_rows)
                         _df["timestamp"] = pd.to_datetime(_df["timestamp"], unit="ms", utc=True)
                         _df = _df.set_index("timestamp")
-                        self.store.save(sym, "1h", _df)
+                        self.store.save(sym, f"{self.timeframe}", _df)
                         df = _df
                         log.info("[ws] %s 数据已重新拉取(%d rows)", sym, len(df))
             except Exception:
@@ -300,18 +320,21 @@ class KlineStrategyLoop:
             if df.empty or len(df) < 24:
                 return
 
-        # 2. 泵检测（预过滤：低于最低策略泵阈值的直接跳过，避免无效计算）
+        # 2. 泵检测预过滤（仅对 pump 类策略生效）
         # 注: pump_pullback_opt 的泵阈值是 0.070738(7%)，预过滤用 5% 保证不误杀
-        pump_window, pump_threshold = 12, 0.05
-        if len(df) >= pump_window:
-            win_high = df["high"].iloc[-pump_window:].max()
-            base_close = df["close"].iloc[-pump_window]
-            pump_pct = win_high / base_close - 1 if base_close > 0 else 0
-            if pump_pct < pump_threshold:
-                log.info("[ws] %s 无泵(%.1f%% < 5%%)", sym, pump_pct * 100)
+        # ⚠️ MeanReversion15m 等均值回归策略不需要 pump 前提, 必须跳过此过滤
+        _has_pump_strat = any("pump" in (n or "") for n, _, _ in self._instances)
+        if _has_pump_strat:
+            pump_window, pump_threshold = 12, 0.05
+            if len(df) >= pump_window:
+                win_high = df["high"].iloc[-pump_window:].max()
+                base_close = df["close"].iloc[-pump_window]
+                pump_pct = win_high / base_close - 1 if base_close > 0 else 0
+                if pump_pct < pump_threshold:
+                    log.info("[ws] %s 无泵(%.1f%% < 5%%)", sym, pump_pct * 100)
+                    return
+            else:
                 return
-        else:
-            return
 
         # 3. 策略信号检测
         has_signal = False
@@ -362,7 +385,7 @@ class KlineStrategyLoop:
 
         # 4c. 24h 止损冷却
         try:
-            cool_file = Path("reports/paper/cooldown.json")
+            cool_file = self.cooldown_path
             if cool_file.exists():
                 import json as _json
                 data = _json.loads(cool_file.read_text())

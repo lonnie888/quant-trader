@@ -37,9 +37,13 @@ async function _getMode() {
 async function loadHistory() {
     const symbol = document.getElementById('filter-symbol').value.trim();
     const days = parseInt(document.getElementById('filter-days').value) || 7;
-    // 根据模式选择 API
+    // 根据模式选择 API (paper 额外带 strategy 参数切换双策略账本)
     const endpoint = _mode === 'paper' ? '/api/history' : '/api/real-history';
     let url = `${endpoint}?page=${currentPage}&per_page=${perPage}&days=${days}`;
+    if (_mode === 'paper') {
+        const strat = (typeof qtStrategy === 'function') ? qtStrategy() : '';
+        url += `&strategy=${strat}`;
+    }
     if (symbol) url += `&symbol=${encodeURIComponent(symbol)}`;
 
     const res = await fetch(url);

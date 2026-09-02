@@ -8,6 +8,7 @@ from .library.kdj import KDJStrategy
 from .library.ma_cross import MACross
 from .library.macd import MACDStrategy
 from .library.mean_reversion import MeanReversionStrategy
+from .library.mean_reversion_15m import MeanReversion15mStrategy
 from .library.pump_pullback import PumpPullbackStrategy
 from .library.rsi import RSIStrategy
 from .library.turtle import TurtleStrategy
@@ -18,6 +19,7 @@ REGISTRY: dict[str, type[Strategy]] = {
     for cls in (
         MACross, MACDStrategy, RSIStrategy, BollingerStrategy, KDJStrategy,
         TurtleStrategy, BreakoutStrategy, MeanReversionStrategy,
+        MeanReversion15mStrategy,
         PumpPullbackStrategy, PumpPullbackOptStrategy,
     )
 }

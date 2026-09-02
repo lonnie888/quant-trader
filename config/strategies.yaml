@@ -36,3 +36,15 @@ strategies:
       take_profit_pct: [0.214923]
       pump_lookback: [96]
       side: ["long_only"]
+  mean_reversion_15m:
+    active: true
+    params:
+      bb_period: [20]
+      bb_std: [2.0]
+      rsi_period: [14]
+      rsi_oversold: [30]
+      stop_loss_pct: [0.025]
+      take_profit_pct: [0.04]
+      hold_bars: [32]
+      cooldown: [4]
+      side: ["long_only"]

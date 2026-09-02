@@ -39,8 +39,9 @@
 
     if (mode === 'paper') {
         // === 模拟盘数据 ===
+        const strat = (typeof qtStrategy === 'function') ? qtStrategy() : '';
         try {
-            const sRes = await fetch('/api/summary');
+            const sRes = await fetch('/api/summary?strategy=' + strat);
             if (sRes.ok) {
                 const s = await sRes.json();
                 const initial = s.initial_capital || 100;
@@ -64,7 +65,7 @@
 
         // 模拟盘权益曲线 - 用 API 的 equity_curve
         try {
-            const sRes = await fetch('/api/summary');
+            const sRes = await fetch('/api/summary?strategy=' + strat);
             if (sRes.ok && typeof Chart !== 'undefined') {
                 const s = await sRes.json();
                 const curve = s.equity_curve || [];
@@ -111,7 +112,7 @@
 
         // 模拟盘持仓
         try {
-            const pRes = await fetch('/api/positions');
+            const pRes = await fetch('/api/positions?strategy=' + strat);
             if (pRes.ok) {
                 const positions = await pRes.json();
                 const pTbody = document.getElementById('paper-positions-table');

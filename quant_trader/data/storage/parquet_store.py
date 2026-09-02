@@ -111,8 +111,19 @@ class ParquetStore:
                 user=self._pg.get("user", "jesse_user"),
                 password=self._pg.get("password", ""),
                 connect_timeout=8,
+                # 防 pg 繁忙(如 Vision 批量导入 COPY 锁)时 daemon 永久阻塞:
+                # 查询超时抛异常 -> 调用方降级本地缓存, daemon 事件循环不卡死
+                options="-c statement_timeout=90000",
             )
         return self._pg_conn
+
+    def _pg_rollback(self):
+        """事务失败后 rollback 恢复连接, 否则后续语句报 'transaction aborted'."""
+        try:
+            if self._pg_conn is not None and not self._pg_conn.closed:
+                self._pg_conn.rollback()
+        except Exception:
+            pass
 
     def _pg_symbols(self) -> set[str]:
         """pg candle 表存在的全部 symbol (懒加载, 用于快速跳过不存在的币)."""
@@ -128,6 +139,7 @@ class ParquetStore:
                 cur.close()
             except Exception as e:
                 logger.warning("pg symbol list failed: %s", e)
+                self._pg_rollback()
                 self._pg_sym_set = set()
         return self._pg_sym_set
 
@@ -175,6 +187,7 @@ class ParquetStore:
             return df
         except Exception as e:
             logger.warning("pg load failed %s/%s: %s", pg_sym, timeframe, e)
+            self._pg_rollback()  # 关键: 失败后恢复连接, 否则后续语句全报 transaction aborted
             return pd.DataFrame()
 
     def _load_local(self, symbol: str, timeframe: str) -> pd.DataFrame:

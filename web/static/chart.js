@@ -62,6 +62,8 @@
 
     // Fetch data
     let url = `/api/klines/${encodeURIComponent(symbol)}?bars=100`;
+    const strat = (typeof qtStrategy === 'function') ? qtStrategy() : '';
+    if (strat) url += `&strategy=${strat}`;
     if (entryId) url += `&entry_id=${entryId}`;
 
     try {

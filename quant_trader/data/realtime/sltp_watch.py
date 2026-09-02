@@ -8,6 +8,7 @@ import logging
 from datetime import datetime, timezone
 
 from ...execution.paper_ledger import get_all_positions
+from pathlib import Path
 
 log = logging.getLogger(__name__)
 
@@ -15,14 +16,15 @@ log = logging.getLogger(__name__)
 class SLTPWatch:
     """On each mark tick, decide if open position should be closed."""
 
-    def __init__(self, on_close=None):
+    def __init__(self, on_close=None, log_path: Path | None = None):
         self.on_close = on_close
+        self.log_path = log_path or Path("reports/paper/positions.jsonl")
         self._price_tracker: dict[int, dict] = {}  # pos_id -> {"min": price, "max": price}
         self._processed_ids: set = set()  # 已处理过的id，防止重复通知
 
     def on_mark(self, symbol: str, mark_price: float):
         # Always re-read open positions from ledger (avoids stale in-memory state).
-        all_events = get_all_positions()
+        all_events = get_all_positions(self.log_path)
         closed_ids = set()
         for ev in all_events:
             if ev.get("status") in ("closed", "blocked"):

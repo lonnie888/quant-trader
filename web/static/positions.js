@@ -2,7 +2,8 @@
 (async function () {
     function strip(sym) { return sym.replace('/USDT:USDT', ''); }
 
-    const res = await fetch('/api/positions');
+    const strat = (typeof qtStrategy === 'function') ? qtStrategy() : '';
+    const res = await fetch('/api/positions?strategy=' + strat);
     const positions = await res.json();
     const body = document.getElementById('positions-body');
 
