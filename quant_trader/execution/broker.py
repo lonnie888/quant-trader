@@ -60,8 +60,11 @@ class PaperBroker(BaseBroker):
         return _paper_open(**kwargs)
     def exit(self, *, position_id: int, exit_ts: str,
              exit_price: float, exit_reason: str, log_path: Path):
+        # ⚠️ 必须透传 log_path: 双策略独立账本下, 平仓要写到开仓所在账本
+        # (曾因忽略 log_path → close_position 默认写主账本, 跨账本 id 冲突误平 MUBARAK)
         return close_position(position_id, exit_ts=exit_ts,
-                              exit_price=exit_price, exit_reason=exit_reason)
+                              exit_price=exit_price, exit_reason=exit_reason,
+                              log_path=log_path)
     def get_positions(self) -> list[dict]:
         return get_open_positions()
 
